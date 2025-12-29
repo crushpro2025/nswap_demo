@@ -1,6 +1,6 @@
 {
   "name": "nexus-swap-backend",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Enterprise-grade NexusSwap Backend",
   "main": "dist/server.js",
   "engines": {
@@ -11,13 +11,13 @@
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "uuid": "^9.0.1",
-    "axios": "^1.6.2"
-  },
-  "devDependencies": {
+    "axios": "^1.6.2",
     "@types/express": "^4.17.21",
     "@types/cors": "^2.8.17",
     "@types/node": "^20.10.0",
-    "typescript": "^5.3.2",
+    "typescript": "^5.3.2"
+  },
+  "devDependencies": {
     "ts-node-dev": "^2.0.0"
   },
   "scripts": {
