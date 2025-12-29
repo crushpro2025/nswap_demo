@@ -1,0 +1,7 @@
+{
+  "name": "NexusSwap - Instant Crypto Exchange",
+  "description": "A professional, non-custodial crypto instant swap platform for educational and legitimate use. Features real-time rates, fixed/floating mechanisms, and transparent tracking.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}

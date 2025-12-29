@@ -1,0 +1,258 @@
+
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { SUPPORTED_COINS, SERVICE_FEE, NETWORK_FEE_ESTIMATES, ADDRESS_VALIDATORS } from '../constants';
+import { Coin, RateType, SwapStatus, HistoryRecord } from '../types';
+import { t } from '../i18n';
+
+const API_BASE_URL = 'http://localhost:3001/api';
+
+const PrecisionDisplay = ({ value, isInput = false, onChange, colorClass = "text-foreground" }: { value: string, isInput?: boolean, onChange?: (val: string) => void, colorClass?: string }) => {
+  if (isInput) {
+    const inputSize = value.length > 12 ? 'text-xl' : value.length > 8 ? 'text-2xl' : 'text-4xl';
+    return (
+      <input 
+        type="number"
+        value={value}
+        onChange={(e) => onChange?.(e.target.value)}
+        className={`bg-transparent ${inputSize} font-black ${colorClass} outline-none w-full min-w-0 placeholder:text-muted-foreground/30 tabular-nums transition-all duration-300`}
+        placeholder="0.0"
+      />
+    );
+  }
+
+  const [whole, decimals] = value.split('.');
+  const primaryDecimals = decimals ? decimals.slice(0, 4) : '';
+  const tailDecimals = decimals ? decimals.slice(4, 10) : ''; 
+  const primaryPartLength = (whole || '0').length + (primaryDecimals.length > 0 ? primaryDecimals.length + 1 : 0);
+  const baseSize = primaryPartLength > 12 ? 'text-xl' : primaryPartLength > 8 ? 'text-2xl' : 'text-4xl';
+
+  return (
+    <div 
+      className={`flex items-baseline font-black tracking-tighter tabular-nums ${baseSize} transition-all duration-300 cursor-pointer hover:opacity-80 active:scale-[0.98]`}
+      onClick={() => { navigator.clipboard.writeText(value); }}
+      title="Click to copy exact amount"
+    >
+      <span className={colorClass}>{whole || '0'}</span>
+      {decimals !== undefined && <span className={`${colorClass} opacity-80`}>.</span>}
+      <span className={`${colorClass} opacity-80`}>{primaryDecimals}</span>
+      {tailDecimals.length > 0 && (
+        <span className="text-muted-foreground/40 font-mono text-[0.4em] ml-0.5 tracking-tight leading-none uppercase select-none">
+          {tailDecimals}
+        </span>
+      )}
+    </div>
+  );
+};
+
+export const SwapWidget: React.FC = () => {
+  const navigate = useNavigate();
+  const [fromCoin, setFromCoin] = useState<Coin>(SUPPORTED_COINS[0]); 
+  const [toCoin, setToCoin] = useState<Coin>(SUPPORTED_COINS[1]);   
+  const [fromAmount, setFromAmount] = useState<string>(SUPPORTED_COINS[0].minAmount.toString());
+  const [toAmount, setToAmount] = useState<string>('0');
+  const [address, setAddress] = useState<string>('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [showPicker, setShowPicker] = useState<'from' | 'to' | null>(null);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [addressError, setAddressError] = useState<string | null>(null);
+  const [amountError, setAmountError] = useState<string | null>(null);
+  const [showCamera, setShowCamera] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const addressInputRef = useRef<HTMLInputElement>(null);
+
+  const calculateRate = useCallback(() => {
+    const mockPrices: Record<string, number> = {
+      'BTC': 68111, 'ETH': 3450, 'USDT': 1, 'SOL': 145, 'TRX': 0.12, 'XMR': 165, 'DOGE': 0.16, 'XRP': 0.62, 'BSC': 590, 'ARB': 1.10, 'TON': 7.20, 'LTC': 82, 'BNB': 585
+    };
+    const fromPrice = mockPrices[fromCoin.symbol] || 1;
+    const toPrice = mockPrices[toCoin.symbol] || 1;
+    const rawRate = fromPrice / toPrice;
+    const amount = parseFloat(fromAmount) || 0;
+    if (amount <= 0) {
+      setToAmount('0');
+      return;
+    }
+    const outputBeforeFees = amount * rawRate;
+    const finalOutput = Math.max(0, outputBeforeFees - (outputBeforeFees * SERVICE_FEE) - (NETWORK_FEE_ESTIMATES[toCoin.symbol] || 0));
+    setToAmount(finalOutput.toFixed(toCoin.precision).replace(/\.?0+$/, ""));
+  }, [fromCoin, toCoin, fromAmount]);
+
+  useEffect(() => { calculateRate(); }, [calculateRate]);
+
+  useEffect(() => {
+    const val = parseFloat(fromAmount);
+    if (isNaN(val) || fromAmount === '') setAmountError(null);
+    else if (val < fromCoin.minAmount) setAmountError(`${t('swap.min')} is ${fromCoin.minAmount} ${fromCoin.symbol}`);
+    else if (val > fromCoin.maxAmount) setAmountError(`${t('swap.max')} is ${fromCoin.maxAmount} ${fromCoin.symbol}`);
+    else setAmountError(null);
+  }, [fromAmount, fromCoin]);
+
+  useEffect(() => {
+    if (!address) { setAddressError(null); return; }
+    const validator = ADDRESS_VALIDATORS[toCoin.symbol];
+    if (validator && !validator.test(address)) setAddressError(`Invalid ${toCoin.symbol} format`);
+    else setAddressError(null);
+  }, [address, toCoin]);
+
+  const handleSwap = async () => {
+    if (!address.trim()) { setAddressError(`Address required`); addressInputRef.current?.focus(); return; }
+    if (addressError || amountError || !parseFloat(fromAmount)) return;
+    
+    setIsLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/orders`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fromSymbol: fromCoin.symbol,
+          toSymbol: toCoin.symbol,
+          fromAmount: fromAmount,
+          destinationAddress: address
+        })
+      });
+
+      if (!response.ok) throw new Error('API Session Rejected');
+      const order = await response.json();
+
+      // Store in history for the UI
+      const history = JSON.parse(localStorage.getItem('nexus_swap_history') || '[]');
+      history.unshift({
+        id: order.id,
+        fromSymbol: order.fromSymbol,
+        toSymbol: order.toSymbol,
+        fromAmount: order.fromAmount,
+        toAmount: order.toAmount,
+        status: order.status,
+        timestamp: Date.now(),
+        destinationAddress: order.destinationAddress
+      });
+      localStorage.setItem('nexus_swap_history', JSON.stringify(history.slice(0, 50)));
+
+      navigate(`/status/${order.id}`);
+    } catch (err) {
+      alert('Backend offline. Please start the Node.js server in /backend first.');
+      console.error(err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const isButtonDisabled = isLoading || amountError !== null || !address || !!addressError;
+  let buttonText = 'Initialize Secure Swap';
+  if (isLoading) buttonText = 'Connecting to Engine...';
+  else if (amountError) buttonText = 'Amount Check Required';
+  else if (!address) buttonText = 'Provide Destination Address';
+  else if (addressError) buttonText = 'Invalid Destination';
+
+  return (
+    <div className="w-full max-w-xl mx-auto flex flex-col gap-3 animate-in fade-in zoom-in-95 duration-500">
+      <div className="bg-card border border-border rounded-[2.5rem] p-5 sm:p-7 shadow-2xl relative overflow-hidden ring-1 ring-border">
+        <div className="flex items-center justify-between mb-4 px-1">
+          <div className="space-y-1">
+             <h2 className="text-[9px] font-black text-muted-foreground uppercase tracking-[0.3em]">Execution Details</h2>
+             <div className="h-0.5 w-5 bg-blue-600/30 rounded-full"></div>
+          </div>
+          <div className="flex items-center gap-2 px-2.5 py-1 bg-green-500/5 rounded-full border border-green-500/10">
+            <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></span>
+            <span className="text-[8px] font-black text-green-500 uppercase tracking-widest">Network Active</span>
+          </div>
+        </div>
+        
+        <div className={`interactive-input-container bg-muted/30 border ${amountError ? 'border-red-500/50' : 'border-border'} rounded-2xl p-4 flex flex-col gap-1 transition-all`}>
+          <div className="flex justify-between items-center px-0.5 mb-1">
+            <label className={`text-[10px] font-black uppercase tracking-[0.2em] transition-colors ${amountError ? 'text-red-500' : 'text-amber-600 dark:text-[#F3BA2F]'}`}>
+              {t('swap.youSend')}
+            </label>
+            <div className="flex gap-3 text-[8px] font-black uppercase tracking-widest text-muted-foreground">
+              <span className="opacity-60">Min: {fromCoin.minAmount}</span>
+              <span className="opacity-60">Max: {fromCoin.maxAmount}</span>
+            </div>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <PrecisionDisplay isInput={true} value={fromAmount} onChange={(val) => setFromAmount(val)} colorClass={amountError ? 'text-red-400' : 'text-amber-600 dark:text-[#F3BA2F]'} />
+            <button onClick={() => setShowPicker('from')} className="flex items-center gap-2 bg-card hover:bg-muted/80 px-3 py-1.5 rounded-xl border border-border transition-all shrink-0 group active:scale-95 shadow-sm">
+              <img src={fromCoin.logo} alt="" className="w-4 h-4 rounded-full" />
+              <div className="text-left leading-tight">
+                <div className="font-black text-foreground text-[10px] tracking-tight">{fromCoin.symbol}</div>
+                <div className="text-[6px] font-bold text-muted-foreground uppercase">{fromCoin.network}</div>
+              </div>
+              <svg className="w-3 h-3 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M19 9l-7 7-7-7" /></svg>
+            </button>
+          </div>
+        </div>
+
+        <div className="relative h-10 flex items-center justify-center my-1">
+          <div className="absolute inset-0 flex items-center"><div className="w-full h-px bg-border"></div></div>
+          <button onClick={() => { if (toCoin.canSend && fromCoin.canReceive) { const temp = fromCoin; setFromCoin(toCoin); setToCoin(temp); setAddress(''); setFromAmount(toCoin.minAmount.toString()); } }} className="relative z-10 w-9 h-9 rounded-xl bg-card border border-border flex items-center justify-center text-muted-foreground hover:text-blue-500 transition-all shadow-lg active:scale-90">
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" /></svg>
+          </button>
+        </div>
+
+        <div className="interactive-input-container bg-muted/30 border border-border rounded-2xl p-4 flex flex-col gap-1 transition-all">
+          <label className="text-[10px] font-black text-emerald-600 dark:text-[#14F195] uppercase tracking-[0.2em] px-0.5 mb-1">{t('swap.youGet')}</label>
+          <div className="flex items-center justify-between gap-3">
+            <PrecisionDisplay value={toAmount} colorClass="text-emerald-600 dark:text-[#14F195]" />
+            <button onClick={() => setShowPicker('to')} className="flex items-center gap-2 bg-card hover:bg-muted/80 px-3 py-1.5 rounded-xl border border-border transition-all shrink-0 group active:scale-95 shadow-sm">
+              <img src={toCoin.logo} alt="" className="w-4 h-4 rounded-full" />
+              <div className="text-left leading-tight">
+                <div className="font-black text-foreground text-[10px] tracking-tight">{toCoin.symbol}</div>
+                <div className="text-[6px] font-bold text-muted-foreground uppercase">{toCoin.network}</div>
+              </div>
+              <svg className="w-3 h-3 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M19 9l-7 7-7-7" /></svg>
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-6 space-y-3">
+          <div className="flex items-center justify-between px-1">
+            <label className="text-[9px] font-black text-muted-foreground uppercase tracking-[0.2em]">Recipient Destination</label>
+            <button className="text-[9px] font-black text-blue-500 hover:text-blue-600 transition-all uppercase tracking-widest">Verify Ledger</button>
+          </div>
+          <div className="relative group interactive-input-container bg-muted/30 border border-border rounded-xl overflow-hidden focus-within:ring-1 ring-blue-500/20">
+            <input ref={addressInputRef} type="text" value={address} onChange={(e) => { setAddress(e.target.value); setAddressError(null); }} className={`w-full bg-transparent p-4 pr-24 text-xs font-bold outline-none placeholder:text-muted-foreground/30 transition-all ${addressError ? 'text-red-400' : 'text-blue-600 dark:text-blue-400'}`} placeholder={`Enter your ${toCoin.name} address...`} />
+            <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-3 text-muted-foreground">
+               <button onClick={async () => { setAddress(await navigator.clipboard.readText()); }} className="hover:text-foreground transition-colors"><svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg></button>
+               <button onClick={async () => { setShowCamera(true); }} className="hover:text-foreground transition-colors"><svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" /></svg></button>
+            </div>
+          </div>
+        </div>
+
+        <button onClick={handleSwap} disabled={isButtonDisabled} className={`w-full mt-6 py-5 font-black rounded-2xl transition-all duration-500 text-sm uppercase tracking-[0.2em] relative overflow-hidden group ${isButtonDisabled ? 'bg-muted text-muted-foreground cursor-not-allowed shadow-none' : 'bg-blue-600 hover:bg-blue-500 text-white shadow-2xl shadow-blue-600/30 active:scale-[0.97]'}`}>
+          <span className="relative z-10 flex items-center justify-center gap-3">
+             {isLoading && <svg className="animate-spin h-4 w-4 text-white" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>}
+             {buttonText}
+          </span>
+        </button>
+      </div>
+
+      {showPicker && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/20 dark:bg-black/80 backdrop-blur-xl animate-in fade-in duration-300">
+          <div className="bg-card border border-border w-full max-sm:max-w-xs max-w-sm rounded-[2.5rem] overflow-hidden shadow-2xl animate-in zoom-in-95 duration-300 flex flex-col">
+            <div className="p-6 pb-4 border-b border-border space-y-4">
+               <div className="flex items-center justify-between">
+                 <h3 className="text-xs font-black text-foreground uppercase tracking-[0.2em]">Select Asset</h3>
+                 <button onClick={() => setShowPicker(null)} className="text-muted-foreground hover:text-foreground"><svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M6 18L18 6M6 6l12 12" /></svg></button>
+               </div>
+               <input autoFocus placeholder="Search symbol..." className="w-full bg-muted border border-border rounded-xl px-4 py-3 outline-none focus:border-blue-500/50 text-foreground font-bold text-sm" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+            </div>
+            <div className="max-h-[350px] overflow-y-auto custom-scrollbar p-2">
+              {SUPPORTED_COINS.filter(c => c.symbol.toLowerCase().includes(searchTerm.toLowerCase())).map(coin => (
+                <button key={coin.id} onClick={() => { if (showPicker === 'from') { setFromCoin(coin); setFromAmount(coin.minAmount.toString()); } else { setToCoin(coin); setAddressError(null); } setShowPicker(null); }} className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/50 rounded-xl transition-all group">
+                  <div className="flex items-center gap-3">
+                    <img src={coin.logo} alt="" className="w-7 h-7 rounded-full bg-muted p-1" />
+                    <div className="text-left">
+                      <div className="text-xs font-black text-foreground group-hover:text-blue-500 transition-colors">{coin.name}</div>
+                      <div className="text-[8px] font-bold text-muted-foreground uppercase">{coin.network}</div>
+                    </div>
+                  </div>
+                  <div className="text-xs font-black text-blue-500 font-mono">{coin.symbol}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};

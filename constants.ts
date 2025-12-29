@@ -1,0 +1,211 @@
+
+import { Coin } from './types';
+
+export const SUPPORTED_COINS: Coin[] = [
+  {
+    id: 'bitcoin',
+    symbol: 'BTC',
+    name: 'Bitcoin',
+    network: 'BTC',
+    logo: 'https://cryptologos.cc/logos/bitcoin-btc-logo.png',
+    color: '#F7931A',
+    precision: 8,
+    minAmount: 0.001,
+    maxAmount: 5,
+    canSend: true,
+    canReceive: true
+  },
+  {
+    id: 'ethereum',
+    symbol: 'ETH',
+    name: 'Ethereum',
+    network: 'ERC20',
+    logo: 'https://cryptologos.cc/logos/ethereum-eth-logo.png',
+    color: '#627EEA',
+    precision: 18,
+    minAmount: 0.01,
+    maxAmount: 100,
+    canSend: true,
+    canReceive: true
+  },
+  {
+    id: 'binance-smart-chain',
+    symbol: 'BSC',
+    name: 'BNB',
+    network: 'BSC',
+    logo: 'https://cryptologos.cc/logos/bnb-bnb-logo.png',
+    color: '#F3BA2F',
+    precision: 18,
+    minAmount: 0.1,
+    maxAmount: 1000,
+    canSend: true,
+    canReceive: true
+  },
+  {
+    id: 'tether-trc',
+    symbol: 'USDT',
+    name: 'Tether TRC20',
+    network: 'TRC20',
+    logo: 'https://cryptologos.cc/logos/tether-usdt-logo.png',
+    color: '#26A17B',
+    precision: 6,
+    minAmount: 50,
+    maxAmount: 100000,
+    canSend: true,
+    canReceive: true
+  },
+  {
+    id: 'tether-erc',
+    symbol: 'USDT',
+    name: 'Tether ERC20',
+    network: 'ERC20',
+    logo: 'https://cryptologos.cc/logos/tether-usdt-logo.png',
+    color: '#26A17B',
+    precision: 6,
+    minAmount: 50,
+    maxAmount: 100000,
+    canSend: true,
+    canReceive: true
+  },
+  {
+    id: 'solana',
+    symbol: 'SOL',
+    name: 'Solana',
+    network: 'SOL',
+    logo: 'https://cryptologos.cc/logos/solana-sol-logo.png',
+    color: '#14F195',
+    precision: 9,
+    minAmount: 1,
+    maxAmount: 5000,
+    canSend: true,
+    canReceive: true
+  },
+  {
+    id: 'tron',
+    symbol: 'TRX',
+    name: 'Tron',
+    network: 'TRC20',
+    logo: 'https://cryptologos.cc/logos/tron-trx-logo.png',
+    color: '#FF0013',
+    precision: 6,
+    minAmount: 200,
+    maxAmount: 500000,
+    canSend: true,
+    canReceive: true
+  },
+  {
+    id: 'litecoin',
+    symbol: 'LTC',
+    name: 'Litecoin',
+    network: 'LTC',
+    logo: 'https://cryptologos.cc/logos/litecoin-ltc-logo.png',
+    color: '#345D9D',
+    precision: 8,
+    minAmount: 0.5,
+    maxAmount: 5000,
+    canSend: true,
+    canReceive: true
+  },
+  {
+    id: 'dogecoin',
+    symbol: 'DOGE',
+    name: 'Dogecoin',
+    network: 'DOGE',
+    logo: 'https://cryptologos.cc/logos/dogecoin-doge-logo.png',
+    color: '#C2A633',
+    precision: 8,
+    minAmount: 100,
+    maxAmount: 1000000,
+    canSend: true,
+    canReceive: false
+  },
+  {
+    id: 'monero',
+    symbol: 'XMR',
+    name: 'Monero',
+    network: 'XMR',
+    logo: 'https://cryptologos.cc/logos/monero-xmr-logo.png',
+    color: '#FF6600',
+    precision: 12,
+    minAmount: 0.5,
+    maxAmount: 1000,
+    canSend: false,
+    canReceive: true
+  },
+  {
+    id: 'arbitrum',
+    symbol: 'ARB',
+    name: 'Arbitrum',
+    network: 'ARB',
+    logo: 'https://cryptologos.cc/logos/arbitrum-arb-logo.png',
+    color: '#28A0F0',
+    precision: 18,
+    minAmount: 50,
+    maxAmount: 50000,
+    canSend: true,
+    canReceive: true
+  },
+  {
+    id: 'toncoin',
+    symbol: 'TON',
+    name: 'Toncoin',
+    network: 'TON',
+    logo: 'https://cryptologos.cc/logos/toncoin-ton-logo.png',
+    color: '#0088CC',
+    precision: 9,
+    minAmount: 10,
+    maxAmount: 10000,
+    canSend: true,
+    canReceive: true
+  },
+  {
+    id: 'ripple',
+    symbol: 'XRP',
+    name: 'XRP',
+    network: 'Ripple',
+    logo: 'https://cryptologos.cc/logos/xrp-xrp-logo.png',
+    color: '#23292F',
+    precision: 6,
+    minAmount: 20,
+    maxAmount: 200000,
+    canSend: true,
+    canReceive: true
+  }
+];
+
+export const SERVICE_FEE = 0.005; // 0.5%
+export const NETWORK_FEE_ESTIMATES: Record<string, number> = {
+  'BTC': 0.0002,
+  'ETH': 0.0015,
+  'USDT': 1.0,
+  'SOL': 0.01,
+  'TRX': 1.0,
+  'XMR': 0.0001,
+  'DOGE': 2.0,
+  'XRP': 0.25,
+  'ADA': 1.0,
+  'MATIC': 0.5,
+  'AVAX': 0.01,
+  'DOT': 0.1,
+  'LINK': 0.5,
+  'SHIB': 250000,
+  'BSC': 0.0005,
+  'ARB': 0.01,
+  'TON': 0.1,
+  'LTC': 0.001
+};
+
+export const ADDRESS_VALIDATORS: Record<string, RegExp> = {
+  'BTC': /^(bc1|[13])[a-zA-HJ-NP-Z0-9]{25,39}$/,
+  'ETH': /^0x[a-fA-F0-9]{40}$/,
+  'USDT': /^T[A-Za-z1-9]{33}$|^0x[a-fA-F0-9]{40}$/,
+  'SOL': /^[1-9A-HJ-NP-Za-km-z]{32,44}$/,
+  'TRX': /^T[A-Za-z1-9]{33}$/,
+  'XMR': /^4[0-9AB][1-9A-HJ-NP-Za-km-z]{93}$/,
+  'DOGE': /^D[5-9A-HJ-NP-U][1-9A-HJ-NP-Za-km-z]{32}$/,
+  'XRP': /^r[0-9a-zA-Z]{24,34}$/,
+  'BSC': /^0x[a-fA-F0-9]{40}$/,
+  'ARB': /^0x[a-fA-F0-9]{40}$/,
+  'TON': /^[a-zA-Z0-9_-]{48}$/,
+  'LTC': /^[LM3][a-km-zA-HJ-NP-Z1-9]{26,33}$/
+};
