@@ -1,4 +1,3 @@
-
 import express from 'express';
 import cors from 'cors';
 import { router as swapRoutes } from './routes/swapRoutes';
@@ -19,7 +18,7 @@ observer.start();
 app.listen(PORT, () => {
   console.log(`
   ================================================
-  🚀 NEXUS SWAP ENGINE v4.0 DEPLOYED
+  🚀 NEXUS SWAP ENGINE v4.0 ACTIVE
   ================================================
   📡 PORT: ${PORT}
   🔗 STATUS: OPERATIONAL
