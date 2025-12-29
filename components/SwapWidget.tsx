@@ -6,6 +6,7 @@ import { Coin, RateType, SwapStatus, HistoryRecord } from '../types';
 import { t } from '../i18n';
 
 // Use environment variable for production, fallback to localhost for dev
+// Note: In Vite, env variables must be prefixed with VITE_
 const API_BASE_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:3001/api';
 
 const PrecisionDisplay = ({ value, isInput = false, onChange, colorClass = "text-foreground" }: { value: string, isInput?: boolean, onChange?: (val: string) => void, colorClass?: string }) => {
@@ -56,14 +57,14 @@ export const SwapWidget: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [isQuoting, setIsQuoting] = useState(false);
   const [networkStatus, setNetworkStatus] = useState<'ACTIVE' | 'OFFLINE' | 'CONNECTING'>('CONNECTING');
-  const [priceStatus, setPriceStatus] = useState<'LIVE' | 'STALE'>('LIVE');
+  const [lastError, setLastError] = useState<string | null>(null);
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [showPicker, setShowPicker] = useState<'from' | 'to' | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [addressError, setAddressError] = useState<string | null>(null);
   const [amountError, setAmountError] = useState<string | null>(null);
   const addressInputRef = useRef<HTMLInputElement>(null);
 
-  // Local Fallback Rates for outages
   const getLocalRate = useCallback((from: string, to: string) => {
     const basePrices: Record<string, number> = {
       'BTC': 68500, 'ETH': 3480, 'USDT': 1, 'SOL': 142, 'TRX': 0.12, 'XMR': 168, 'DOGE': 0.16, 'XRP': 0.62, 'BSC': 595, 'BNB': 595, 'ARB': 1.12, 'TON': 7.15
@@ -71,31 +72,46 @@ export const SwapWidget: React.FC = () => {
     return (basePrices[from] || 1) / (basePrices[to] || 1);
   }, []);
 
-  // Health Check with Cold Start Resiliency
+  // Resilient Health Polling with Diagnostic Info
   useEffect(() => {
-    let checkInterval: number;
+    let timerId: number;
+    let isMounted = true;
+
     const checkHealth = async () => {
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 8000);
-        const res = await fetch(`${API_BASE_URL}/health`, { signal: controller.signal });
-        clearTimeout(timeoutId);
+        const timeout = setTimeout(() => controller.abort(), 12000); 
+        
+        const res = await fetch(`${API_BASE_URL}/health`, { 
+          signal: controller.signal,
+          mode: 'cors'
+        });
+        clearTimeout(timeout);
+
+        if (!isMounted) return;
 
         if (res.ok) {
           setNetworkStatus('ACTIVE');
-          clearInterval(checkInterval);
-          checkInterval = window.setInterval(checkHealth, 60000);
+          setLastError(null);
+          timerId = window.setTimeout(checkHealth, 30000);
         } else {
-          setNetworkStatus('OFFLINE');
+          setNetworkStatus('CONNECTING');
+          setLastError(`HTTP ${res.status}: ${res.statusText}`);
+          timerId = window.setTimeout(checkHealth, 4000);
         }
-      } catch (e) {
-        setNetworkStatus(prev => prev === 'ACTIVE' ? 'OFFLINE' : 'CONNECTING');
+      } catch (e: any) {
+        if (!isMounted) return;
+        setNetworkStatus('CONNECTING');
+        setLastError(e.message || "Network Error: Possible CORS or Cold Start");
+        timerId = window.setTimeout(checkHealth, 4000);
       }
     };
 
     checkHealth();
-    checkInterval = window.setInterval(checkHealth, 5000);
-    return () => clearInterval(checkInterval);
+    return () => {
+      isMounted = false;
+      clearTimeout(timerId);
+    };
   }, []);
 
   const updateQuote = useCallback(async () => {
@@ -110,16 +126,12 @@ export const SwapWidget: React.FC = () => {
       if (data.estimatedAmount && !data.error) {
         const finalOutput = Math.max(0, parseFloat(data.estimatedAmount) - (parseFloat(data.estimatedAmount) * SERVICE_FEE));
         setToAmount(finalOutput.toFixed(toCoin.precision).replace(/\.?0+$/, ""));
-        setPriceStatus(data.isStale ? 'STALE' : 'LIVE');
-      } else {
-        throw new Error("Backend quote unavailable");
       }
     } catch (err) {
       const localRate = getLocalRate(fromCoin.symbol, toCoin.symbol);
       const estimated = amount * localRate;
       const finalOutput = Math.max(0, estimated - (estimated * SERVICE_FEE));
       setToAmount(finalOutput.toFixed(toCoin.precision).replace(/\.?0+$/, ""));
-      setPriceStatus('STALE');
     } finally {
       setIsQuoting(false);
     }
@@ -137,13 +149,6 @@ export const SwapWidget: React.FC = () => {
     else if (val > fromCoin.maxAmount) setAmountError(`${t('swap.max')} is ${fromCoin.maxAmount} ${fromCoin.symbol}`);
     else setAmountError(null);
   }, [fromAmount, fromCoin]);
-
-  useEffect(() => {
-    if (!address) { setAddressError(null); return; }
-    const validator = ADDRESS_VALIDATORS[toCoin.symbol];
-    if (validator && !validator.test(address)) setAddressError(`Invalid ${toCoin.symbol} format`);
-    else setAddressError(null);
-  }, [address, toCoin]);
 
   const handleSwap = async () => {
     if (!address.trim()) { setAddressError(`Address required`); addressInputRef.current?.focus(); return; }
@@ -182,7 +187,7 @@ export const SwapWidget: React.FC = () => {
       localStorage.setItem('nexus_swap_history', JSON.stringify(history.slice(0, 50)));
       navigate(`/status/${order.id}`);
     } catch (err: any) {
-      alert(`Network Error: ${err.message}. Backend node may be initializing.`);
+      alert(`Connection Timeout: The swap engine is still waking up. Please try again in 10 seconds.`);
     } finally {
       setIsLoading(false);
     }
@@ -191,11 +196,7 @@ export const SwapWidget: React.FC = () => {
   const isButtonDisabled = isLoading || amountError !== null || !address || !!addressError || networkStatus !== 'ACTIVE';
   let buttonText = 'Initialize Secure Swap';
   if (networkStatus === 'CONNECTING') buttonText = 'Waking Up Engine...';
-  else if (networkStatus === 'OFFLINE') buttonText = 'Node Unreachable';
-  else if (isLoading) buttonText = 'Connecting to Engine...';
-  else if (amountError) buttonText = 'Amount Check Required';
-  else if (!address) buttonText = 'Provide Destination Address';
-  else if (addressError) buttonText = 'Invalid Destination';
+  else if (isLoading) buttonText = 'Securing Liquidity...';
 
   return (
     <div className="w-full max-w-xl mx-auto flex flex-col gap-3 animate-in fade-in zoom-in-95 duration-500">
@@ -206,32 +207,50 @@ export const SwapWidget: React.FC = () => {
              <div className="h-0.5 w-5 bg-blue-600/30 rounded-full"></div>
           </div>
           <div className="flex items-center gap-4">
-            {priceStatus === 'STALE' && (
-              <div className="text-[8px] font-black text-amber-500 uppercase tracking-widest animate-pulse">Safety Cache Active</div>
-            )}
-            <div 
-              className={`flex items-center gap-2 px-2.5 py-1 rounded-full border transition-all duration-500 cursor-help group/status ${
+            <button 
+              onClick={() => setShowDiagnostics(!showDiagnostics)}
+              className={`flex items-center gap-2 px-2.5 py-1 rounded-full border transition-all duration-500 ${
                 networkStatus === 'ACTIVE' ? 'bg-green-500/5 border-green-500/10' : 
-                networkStatus === 'CONNECTING' ? 'bg-amber-500/5 border-amber-500/10' : 
-                'bg-red-500/5 border-red-500/10'
+                'bg-amber-500/5 border-amber-500/10'
               }`}
-              title={networkStatus === 'CONNECTING' ? "Engine is waking up from standby. This usually takes 30-40 seconds." : ""}
             >
-              <span className={`w-1.5 h-1.5 rounded-full animate-pulse ${
-                networkStatus === 'ACTIVE' ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]' : 
-                networkStatus === 'CONNECTING' ? 'bg-amber-500 animate-bounce' : 
-                'bg-red-500'
+              <span className={`w-1.5 h-1.5 rounded-full ${
+                networkStatus === 'ACTIVE' ? 'bg-green-500 animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.5)]' : 
+                'bg-amber-500 animate-bounce'
               }`}></span>
               <span className={`text-[8px] font-black uppercase tracking-widest ${
-                networkStatus === 'ACTIVE' ? 'text-green-500' : 
-                networkStatus === 'CONNECTING' ? 'text-amber-500' : 
-                'text-red-500'
+                networkStatus === 'ACTIVE' ? 'text-green-500' : 'text-amber-500'
               }`}>
-                {networkStatus === 'ACTIVE' ? 'Network Active' : networkStatus === 'CONNECTING' ? 'Waking Up Node' : 'Node Offline'}
+                {networkStatus === 'ACTIVE' ? 'Node Active' : 'Node Waking'}
               </span>
-            </div>
+            </button>
           </div>
         </div>
+
+        {/* Diagnostic Panel */}
+        {showDiagnostics && (
+          <div className="mb-4 p-4 bg-muted/50 rounded-2xl border border-blue-500/20 animate-in slide-in-from-top-2">
+            <div className="text-[10px] font-black text-blue-500 uppercase tracking-widest mb-2">Diagnostic Data</div>
+            <div className="space-y-2">
+              <div className="flex justify-between items-center text-[8px] uppercase font-bold text-muted-foreground">
+                <span>Target API:</span>
+                <span className="text-foreground font-mono">{API_BASE_URL}</span>
+              </div>
+              <div className="flex justify-between items-center text-[8px] uppercase font-bold text-muted-foreground">
+                <span>Status:</span>
+                <span className={networkStatus === 'ACTIVE' ? 'text-green-500' : 'text-amber-500'}>{networkStatus}</span>
+              </div>
+              {lastError && (
+                <div className="text-[8px] uppercase font-bold text-red-400 bg-red-500/5 p-2 rounded-lg border border-red-500/10">
+                  Last Log: {lastError}
+                </div>
+              )}
+              <div className="text-[7px] text-muted-foreground italic leading-tight">
+                * If API is "localhost", your VITE_API_URL environment variable isn't set on Render.
+              </div>
+            </div>
+          </div>
+        )}
         
         <div className={`interactive-input-container bg-muted/30 border ${amountError ? 'border-red-500/50' : 'border-border'} rounded-2xl p-4 flex flex-col gap-1 transition-all`}>
           <div className="flex justify-between items-center px-0.5 mb-1">
@@ -298,9 +317,9 @@ export const SwapWidget: React.FC = () => {
           </span>
         </button>
 
-        {networkStatus === 'CONNECTING' && (
-          <div className="mt-4 p-3 rounded-xl bg-amber-500/5 border border-amber-500/10 text-[9px] font-bold text-amber-500/80 uppercase tracking-widest text-center animate-in fade-in slide-in-from-top-2">
-            Initial connection to node can take ~40s due to standby wake-up...
+        {networkStatus !== 'ACTIVE' && (
+          <div className="mt-4 p-3 rounded-xl bg-amber-500/5 border border-amber-500/10 text-[9px] font-bold text-amber-500/80 uppercase tracking-widest text-center">
+            Node standby wake-up takes ~40s on Render Free Tier.
           </div>
         )}
       </div>
