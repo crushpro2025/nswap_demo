@@ -11,7 +11,32 @@ const aggregator = LiquidityAggregator.getInstance();
  * PING: Node Health Check
  */
 router.get('/health', (req: any, res: any) => {
-  res.json({ status: 'UP', engine: 'v4.0.3-PROD', timestamp: Date.now() });
+  res.json({ status: 'UP', engine: 'v4.1.0-OMS-READY', timestamp: Date.now() });
+});
+
+/**
+ * ADMIN: List All Global Orders (OMS)
+ */
+router.get('/admin/orders', (req: any, res: any) => {
+  const allOrders = orderManager.getAllOrders();
+  res.json(allOrders);
+});
+
+/**
+ * ADMIN: Update Order Status Manually (OMS Control)
+ */
+router.post('/admin/orders/:id/status', (req: any, res: any) => {
+  const { id } = req.params;
+  const { status } = req.body;
+  const order = orderManager.getOrder(id);
+  
+  if (!order) return res.status(404).json({ error: 'Order not found' });
+  
+  order.status = status;
+  orderManager.updateOrder(order);
+  
+  console.log(`[ADMIN ACTION] Order ${id} status manually set to ${status}`);
+  res.json(order);
 });
 
 /**

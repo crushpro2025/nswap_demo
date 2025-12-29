@@ -8,6 +8,7 @@ import Documentation from './pages/Documentation';
 import Security from './pages/Security';
 import FAQ from './pages/FAQ';
 import History from './pages/History';
+import Admin from './pages/Admin';
 import { MarketTicker } from './components/MarketTicker';
 import { t } from './i18n';
 
@@ -78,6 +79,7 @@ export default function App() {
             <Route path="/docs" element={<Documentation />} />
             <Route path="/security" element={<Security />} />
             <Route path="/faq" element={<FAQ />} />
+            <Route path="/admin" element={<Admin />} />
           </Routes>
         </main>
       </div>
