@@ -14,7 +14,8 @@ export class OrderManager {
     const newOrder: SwapOrder = {
       id: uuidv4().substring(0, 8).toUpperCase(),
       ...data,
-      depositAddress: `0x${uuidv4().substring(0, 32)}`,
+      // In production, derive this from an xPub using bip32-path logic
+      depositAddress: `0x${uuidv4().substring(0, 32)}`, 
       status: SwapStatus.AWAITING_DEPOSIT,
       confirmations: 0,
       requiredConfirmations: data.fromSymbol === 'BTC' ? 3 : 1,
@@ -40,5 +41,17 @@ export class OrderManager {
 
   public updateOrder(order: SwapOrder) {
     orders.set(order.id, order);
+  }
+
+  /**
+   * Generates a high-level summary for the Executive Dashboard
+   */
+  public getOrderSummary() {
+    const all = this.getAllOrders();
+    return {
+      total: all.length,
+      active: all.filter(o => o.status !== SwapStatus.COMPLETED && o.status !== SwapStatus.EXPIRED).length,
+      recent: all.slice(-10).reverse()
+    };
   }
 }

@@ -1,39 +1,77 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { SwapStatus } from '../types';
-import { SUPPORTED_COINS } from '../constants';
+import { SUPPORTED_COINS, SERVICE_FEE } from '../constants';
 
 const API_BASE_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:3001/api';
+
+interface DashboardStats {
+  totalOrders: number;
+  activeOrders: number;
+  newOrdersToday: number;
+  totalVolumeUSD: number;
+  pendingValueUSD: number;
+  estimatedRevenue: number;
+  successRate: number;
+}
 
 export default function Admin() {
   const [orders, setOrders] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<'OVERVIEW' | 'LEDGER' | 'INVENTORY'>('OVERVIEW');
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeTab, setActiveTab] = useState<'LEDGER' | 'WALLETS'>('LEDGER');
   const [selectedOrder, setSelectedOrder] = useState<any>(null);
 
-  const fetchAllOrders = async () => {
+  const fetchOrders = async () => {
     try {
       const res = await fetch(`${API_BASE_URL}/admin/orders`);
       const data = await res.json();
       setOrders(data.sort((a: any, b: any) => b.createdAt - a.createdAt));
     } catch (err) {
-      console.error("OMS Sync Failure:", err);
+      console.error("Failed to sync with OMS Engine");
     } finally {
       setIsLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchAllOrders();
-    const interval = setInterval(fetchAllOrders, 5000);
-    // Force light theme body background for this page specifically
+    fetchOrders();
+    const interval = setInterval(fetchOrders, 5000);
+    // Explicitly set light theme styles for Admin page
+    document.documentElement.classList.remove('dark');
     document.body.style.backgroundColor = '#F8FAFC';
     return () => {
       clearInterval(interval);
       document.body.style.backgroundColor = '';
     };
   }, []);
+
+  const stats = useMemo<DashboardStats>(() => {
+    const now = Date.now();
+    const oneDayAgo = now - 24 * 60 * 60 * 1000;
+    
+    const total = orders.length;
+    const active = orders.filter(o => o.status !== SwapStatus.COMPLETED && o.status !== SwapStatus.EXPIRED).length;
+    const newToday = orders.filter(o => o.createdAt > oneDayAgo).length;
+    const completed = orders.filter(o => o.status === SwapStatus.COMPLETED);
+    const awaiting = orders.filter(o => o.status === SwapStatus.AWAITING_DEPOSIT);
+    
+    // Mock USD calculation (Using $100 baseline for simulation as in existing logic)
+    const volume = completed.reduce((acc, o) => acc + (parseFloat(o.fromAmount) * 100), 0);
+    const pendingValue = awaiting.reduce((acc, o) => acc + (parseFloat(o.fromAmount) * 100), 0);
+    const revenue = volume * SERVICE_FEE;
+    const successRate = total > 0 ? (completed.length / total) * 100 : 0;
+
+    return { 
+      totalOrders: total, 
+      activeOrders: active, 
+      newOrdersToday: newToday,
+      totalVolumeUSD: volume, 
+      pendingValueUSD: pendingValue,
+      estimatedRevenue: revenue, 
+      successRate 
+    };
+  }, [orders]);
 
   const filteredOrders = useMemo(() => {
     return orders.filter(o => 
@@ -43,249 +81,303 @@ export default function Admin() {
     );
   }, [orders, searchQuery]);
 
-  const updateStatus = async (id: string, newStatus: SwapStatus) => {
+  const updateStatus = async (id: string, status: SwapStatus) => {
     try {
       await fetch(`${API_BASE_URL}/admin/orders/${id}/status`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: newStatus })
+        body: JSON.stringify({ status })
       });
-      fetchAllOrders();
+      fetchOrders();
     } catch (err) {
-      alert("Status override rejected.");
+      alert("Status override failed");
     }
   };
 
+  const getCoinNetwork = (symbol: string) => {
+    return SUPPORTED_COINS.find(c => c.symbol === symbol)?.network || 'Unknown';
+  };
+
   return (
-    <div className="min-h-screen bg-[#F8FAFC] text-slate-900 font-sans p-0 m-0">
-      {/* Sidebar-style Header */}
-      <header className="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between shadow-sm sticky top-0 z-40">
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-2">
-            <div className="w-9 h-9 bg-slate-900 rounded-lg flex items-center justify-center">
+    <div className="min-h-screen bg-[#F8FAFC] text-slate-900 font-sans selection:bg-indigo-100 pb-20">
+      {/* Top Navigation */}
+      <nav className="bg-white border-b border-slate-200 px-8 py-4 sticky top-0 z-50 shadow-sm flex items-center justify-between">
+        <div className="flex items-center gap-10">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 bg-indigo-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-600/20">
               <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 2L4.5 20.29L5.21 21L12 18L18.79 21L19.5 20.29L12 2Z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M13 10V3L4 14h7v7l9-11h-7z" />
               </svg>
             </div>
-            <div className="leading-none">
-              <h1 className="text-base font-bold text-slate-900">OMS Control Center</h1>
-              <p className="text-[10px] text-slate-500 font-semibold uppercase tracking-widest mt-0.5">Order Management System v5.0</p>
+            <div>
+              <h1 className="text-sm font-black tracking-tight text-slate-900 uppercase">Nexus <span className="text-indigo-600">Admin</span></h1>
+              <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">OMS Engine v5.5</p>
             </div>
           </div>
-          
-          <nav className="flex ml-10">
-            <button 
-              onClick={() => setActiveTab('LEDGER')}
-              className={`px-4 py-2 text-xs font-bold uppercase tracking-wider border-b-2 transition-all ${activeTab === 'LEDGER' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
-            >
-              Transaction Ledger
-            </button>
-            <button 
-              onClick={() => setActiveTab('WALLETS')}
-              className={`px-4 py-2 text-xs font-bold uppercase tracking-wider border-b-2 transition-all ${activeTab === 'WALLETS' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
-            >
-              Address Monitoring
-            </button>
-          </nav>
+
+          <div className="flex gap-1 bg-slate-100 p-1 rounded-xl">
+            <TabButton active={activeTab === 'OVERVIEW'} onClick={() => setActiveTab('OVERVIEW')} label="Overview" />
+            <TabButton active={activeTab === 'LEDGER'} onClick={() => setActiveTab('LEDGER')} label="Ledger" />
+            <TabButton active={activeTab === 'INVENTORY'} onClick={() => setActiveTab('INVENTORY')} label="Inventory" />
+          </div>
         </div>
 
         <div className="flex items-center gap-4">
-          <div className="bg-slate-100 rounded-lg px-3 py-1.5 flex items-center gap-2">
-            <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-            <span className="text-[11px] font-bold text-slate-600 uppercase">Nodes Sync'd</span>
+          <div className="flex items-center gap-2 px-3 py-1.5 bg-green-50 rounded-full border border-green-100">
+            <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+            <span className="text-[10px] font-bold text-green-700 uppercase tracking-wider">Sync: Nominal</span>
           </div>
-          <button onClick={fetchAllOrders} className={`p-2 text-slate-400 hover:text-blue-600 transition-colors ${isLoading ? 'animate-spin' : ''}`}>
+          <button onClick={fetchOrders} className={`p-2 text-slate-400 hover:text-indigo-600 transition-colors ${isLoading ? 'animate-spin' : ''}`}>
              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" strokeWidth={2} /></svg>
           </button>
         </div>
-      </header>
+      </nav>
 
-      <main className="max-w-[1440px] mx-auto p-8">
+      <main className="max-w-[1400px] mx-auto p-8">
         
-        {activeTab === 'LEDGER' ? (
-          <div className="space-y-6">
-            {/* Control Strip */}
-            <div className="bg-white rounded-xl border border-slate-200 p-4 flex gap-4 items-center">
+        {activeTab === 'OVERVIEW' && (
+          <div className="space-y-8 animate-in fade-in duration-500">
+            {/* KPI Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+              <KpiCard label="New Orders (24h)" value={stats.newOrdersToday.toString()} sub="Velocity Tracking" icon="📥" color="indigo" />
+              <KpiCard label="Total Vol (Gross)" value={`$${stats.totalVolumeUSD.toLocaleString()}`} sub="Settled Settlement" icon="📊" />
+              <KpiCard label="Active Sessions" value={stats.activeOrders.toString()} sub="Pending Completion" icon="🔄" />
+              <KpiCard label="Success Rate" value={`${stats.successRate.toFixed(1)}%`} sub="Platform Integrity" icon="⚡" />
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+              <div className="lg:col-span-2 bg-white rounded-3xl border border-slate-200 p-8 shadow-sm">
+                <div className="flex justify-between items-center mb-6">
+                  <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest">Recent Lifecycle Events</h3>
+                  <button onClick={() => setActiveTab('LEDGER')} className="text-[10px] font-bold text-indigo-600 uppercase hover:underline">Full Ledger</button>
+                </div>
+                <div className="space-y-4">
+                  {orders.slice(0, 6).map(order => (
+                    <div key={order.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100 hover:border-indigo-200 transition-all cursor-pointer" onClick={() => { setSelectedOrder(order); }}>
+                      <div className="flex items-center gap-4">
+                        <div className="w-10 h-10 rounded-full bg-white flex items-center justify-center text-[10px] font-black shadow-sm border border-slate-100">{order.fromSymbol.substring(0,2)}</div>
+                        <div>
+                          <div className="text-xs font-bold text-slate-900">{order.fromAmount} {order.fromSymbol} <span className="text-slate-300 mx-1">→</span> {order.toAmount} {order.toSymbol}</div>
+                          <div className="text-[10px] text-slate-400 mt-0.5">{order.id} • {new Date(order.createdAt).toLocaleTimeString()}</div>
+                        </div>
+                      </div>
+                      <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest border ${getStatusClasses(order.status)}`}>
+                        {order.status.replace('_', ' ')}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="bg-white rounded-3xl border border-slate-200 p-8 shadow-sm">
+                <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest mb-6">Network Distribution</h3>
+                <div className="space-y-6">
+                  {['BTC', 'ETH', 'SOL', 'USDT', 'BSC', 'TRX'].map(sym => {
+                    const count = orders.filter(o => o.fromSymbol === sym).length;
+                    const percent = orders.length > 0 ? (count / orders.length) * 100 : 0;
+                    return (
+                      <div key={sym} className="space-y-2">
+                        <div className="flex justify-between items-center text-[10px] font-bold text-slate-500 uppercase">
+                          <span>{sym} Activity</span>
+                          <span className="text-slate-900">{count} Events</span>
+                        </div>
+                        <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                          <div className="h-full bg-indigo-500 transition-all duration-1000" style={{ width: `${percent}%` }}></div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'LEDGER' && (
+          <div className="space-y-6 animate-in fade-in duration-500">
+            <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm flex items-center gap-4">
               <div className="relative flex-grow">
                 <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" strokeWidth={2} /></svg>
                 <input 
                   type="text" 
-                  placeholder="Filter by Order ID, Symbol or Address..." 
-                  className="w-full bg-slate-50 border border-slate-200 rounded-lg py-2 pl-10 pr-4 text-sm focus:bg-white focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
+                  placeholder="Filter by ID, Address, or Asset Symbol..." 
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 pl-10 pr-4 text-xs font-medium focus:ring-4 focus:ring-indigo-500/10 focus:bg-white outline-none transition-all"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                 />
               </div>
-              <div className="text-[11px] font-bold text-slate-400 uppercase whitespace-nowrap px-4 border-l border-slate-200">
-                Found {filteredOrders.length} results
-              </div>
             </div>
 
-            {/* Main Table */}
-            <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
               <table className="w-full text-left border-collapse">
                 <thead className="bg-slate-50 border-b border-slate-200">
                   <tr>
-                    <th className="px-6 py-4 text-[11px] font-bold text-slate-500 uppercase tracking-wider">Order Reference</th>
-                    <th className="px-6 py-4 text-[11px] font-bold text-slate-500 uppercase tracking-wider">Exchange Pair</th>
-                    <th className="px-6 py-4 text-[11px] font-bold text-slate-500 uppercase tracking-wider">Settlement Target</th>
-                    <th className="px-6 py-4 text-[11px] font-bold text-slate-500 uppercase tracking-wider">Status</th>
-                    <th className="px-6 py-4 text-[11px] font-bold text-slate-500 uppercase tracking-wider text-right">Protocol Action</th>
+                    <th className="px-6 py-4 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Transaction ID</th>
+                    <th className="px-6 py-4 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Execution Route</th>
+                    <th className="px-6 py-4 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Settlement Target</th>
+                    <th className="px-6 py-4 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] text-center">Status</th>
+                    <th className="px-6 py-4 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] text-right">Overrides</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {filteredOrders.map(order => (
-                    <tr 
-                      key={order.id} 
-                      onClick={() => setSelectedOrder(order)}
-                      className="hover:bg-blue-50/50 transition-colors cursor-pointer"
-                    >
+                  {filteredOrders.length > 0 ? filteredOrders.map(order => (
+                    <tr key={order.id} className="hover:bg-indigo-50/40 transition-colors cursor-pointer" onClick={() => setSelectedOrder(order)}>
                       <td className="px-6 py-5">
-                        <div className="text-sm font-bold text-slate-900">{order.id}</div>
-                        <div className="text-[10px] text-slate-400 font-medium mt-0.5">{new Date(order.createdAt).toLocaleString()}</div>
+                        <div className="text-xs font-bold text-slate-900">{order.id}</div>
+                        <div className="text-[10px] text-slate-400 mt-1 font-medium">{new Date(order.createdAt).toLocaleString()}</div>
                       </td>
                       <td className="px-6 py-5">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-3">
                            <span className="text-xs font-bold text-slate-700">{order.fromAmount} {order.fromSymbol}</span>
-                           <svg className="w-3 h-3 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M14 5l7 7m0 0l-7 7m7-7H3" strokeWidth={2} /></svg>
-                           <span className="text-xs font-bold text-blue-600">{order.toAmount} {order.toSymbol}</span>
+                           <span className="text-slate-300 text-sm">→</span>
+                           <span className="text-xs font-bold text-indigo-600">{order.toAmount} {order.toSymbol}</span>
                         </div>
                       </td>
                       <td className="px-6 py-5">
-                        <div className="text-[11px] font-mono text-slate-500 truncate max-w-[180px]" title={order.destinationAddress}>
-                          {order.destinationAddress}
-                        </div>
+                        <div className="text-[10px] font-mono text-slate-500 truncate max-w-[200px] bg-slate-50 px-2 py-1 rounded border border-slate-100">{order.destinationAddress}</div>
                       </td>
-                      <td className="px-6 py-5">
-                        <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-tight ${getStatusClasses(order.status)}`}>
+                      <td className="px-6 py-5 text-center">
+                        <span className={`px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest border ${getStatusClasses(order.status)}`}>
                           {order.status.replace('_', ' ')}
                         </span>
                       </td>
-                      <td className="px-6 py-5 text-right" onClick={(e) => e.stopPropagation()}>
+                      <td className="px-6 py-5 text-right" onClick={e => e.stopPropagation()}>
                         <select 
+                          className="bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-[10px] font-bold uppercase outline-none focus:ring-4 focus:ring-indigo-500/10 cursor-pointer"
                           value={order.status}
                           onChange={(e) => updateStatus(order.id, e.target.value as SwapStatus)}
-                          className="bg-white border border-slate-200 rounded px-2 py-1 text-[10px] font-bold uppercase outline-none focus:ring-2 focus:ring-blue-500/20"
                         >
-                          {Object.values(SwapStatus).map(s => <option key={s} value={s}>{s}</option>)}
+                          {Object.values(SwapStatus).map(s => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
                         </select>
                       </td>
                     </tr>
-                  ))}
+                  )) : (
+                    <tr>
+                      <td colSpan={5} className="px-6 py-20 text-center text-slate-400 font-bold uppercase text-xs tracking-widest">No order matches found</td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
           </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-             <div className="md:col-span-2 space-y-6">
-                <div className="bg-white rounded-xl border border-slate-200 p-6">
-                   <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-6">Generated Protocol Addresses</h3>
-                   <div className="space-y-4">
-                      {orders.slice(0, 15).map(o => (
-                        <div key={o.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-100 group">
-                           <div className="flex items-center gap-4">
-                              <div className="w-8 h-8 rounded-full bg-white border border-slate-200 flex items-center justify-center text-[10px] font-bold text-slate-400">
-                                {o.fromSymbol.substring(0,2)}
-                              </div>
-                              <div>
-                                <div className="text-[11px] font-mono text-slate-800 break-all">{o.depositAddress}</div>
-                                <div className="text-[9px] text-slate-400 font-bold uppercase mt-0.5">Linked to Order ID: {o.id}</div>
-                              </div>
-                           </div>
-                           <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                              <button onClick={() => window.open(`https://blockstream.info/address/${o.depositAddress}`, '_blank')} className="text-[10px] font-bold text-blue-600 uppercase hover:underline">Explorer</button>
-                           </div>
-                        </div>
-                      ))}
-                      {orders.length === 0 && <div className="text-center py-20 text-slate-400 uppercase text-xs font-bold italic tracking-widest">No active deposit addresses</div>}
-                   </div>
+        )}
+
+        {activeTab === 'INVENTORY' && (
+          <div className="space-y-8 animate-in fade-in duration-500">
+            {/* Inventory KPI */}
+            <div className="bg-indigo-600 rounded-[2.5rem] p-10 text-white flex flex-col md:flex-row justify-between items-center shadow-xl shadow-indigo-600/20">
+              <div className="mb-6 md:mb-0 text-center md:text-left">
+                <span className="text-[11px] font-black uppercase tracking-[0.3em] opacity-80">Expected Inbound Liquidity</span>
+                <div className="text-4xl font-black mt-2 tracking-tight">${stats.pendingValueUSD.toLocaleString()} <span className="text-lg opacity-60 font-bold uppercase tracking-widest ml-2">Total Expected</span></div>
+              </div>
+              <div className="flex gap-4">
+                <div className="bg-white/10 px-6 py-4 rounded-3xl backdrop-blur-md border border-white/10">
+                   <div className="text-[9px] font-black uppercase tracking-widest opacity-70">Awaiting Deposit</div>
+                   <div className="text-xl font-black">{orders.filter(o => o.status === SwapStatus.AWAITING_DEPOSIT).length} Swaps</div>
                 </div>
-             </div>
-             
-             <div className="space-y-6">
-                <div className="bg-blue-600 text-white rounded-xl p-6 shadow-lg">
-                   <h3 className="text-xs font-bold uppercase tracking-[0.2em] mb-4 opacity-80">OMS Intelligence</h3>
-                   <div className="space-y-6">
-                      <div>
-                        <div className="text-[10px] font-black uppercase mb-1">Total Network Flow</div>
-                        <div className="text-3xl font-black">${orders.reduce((acc, curr) => acc + (parseFloat(curr.fromAmount) * 100), 0).toLocaleString()}</div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+               {orders.filter(o => o.status === SwapStatus.AWAITING_DEPOSIT).map(o => (
+                 <div key={o.id} className="bg-white border border-slate-200 rounded-[2rem] p-7 shadow-sm hover:shadow-xl hover:border-indigo-500/30 transition-all group">
+                    <div className="flex justify-between items-start mb-8">
+                      <div className="flex flex-col">
+                        <span className="text-[9px] font-black text-indigo-600 uppercase bg-indigo-50 px-2 py-1 rounded w-fit mb-2">HOT ADDRESS ACTIVE</span>
+                        <div className="text-xl font-black text-slate-900">{o.fromAmount} {o.fromSymbol}</div>
+                        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Expected Inbound</div>
                       </div>
-                      <div className="pt-4 border-t border-white/10">
-                        <div className="flex justify-between text-[10px] font-bold uppercase mb-2">
-                           <span>Simulated Liquidity</span>
-                           <span>98.2%</span>
+                      <div className="w-12 h-12 rounded-2xl bg-slate-50 flex items-center justify-center text-lg border border-slate-100 shadow-inner group-hover:scale-110 transition-transform">
+                        {o.fromSymbol === 'BTC' ? '₿' : 'Ξ'}
+                      </div>
+                    </div>
+
+                    <div className="space-y-5">
+                      <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                        <div className="flex justify-between items-center mb-2">
+                           <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Protocol Address</span>
+                           <span className="text-[9px] font-black text-indigo-500 uppercase bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">{getCoinNetwork(o.fromSymbol)} Network</span>
                         </div>
-                        <div className="h-1 bg-white/10 rounded-full">
-                           <div className="h-full bg-white w-[98%]"></div>
+                        <div className="font-mono text-[10px] text-slate-700 break-all select-all leading-relaxed">
+                          {o.depositAddress}
                         </div>
                       </div>
-                   </div>
-                </div>
-             </div>
+                      
+                      <div className="flex gap-3">
+                         <button 
+                           onClick={() => updateStatus(o.id, SwapStatus.CONFIRMING)} 
+                           className="flex-1 py-3 bg-indigo-600 text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-600/10"
+                         >
+                           Force Confirm
+                         </button>
+                         <button className="p-3 bg-slate-100 text-slate-500 rounded-xl hover:bg-slate-200 transition-colors">
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2" strokeWidth={2} /></svg>
+                         </button>
+                      </div>
+                    </div>
+                 </div>
+               ))}
+               {orders.filter(o => o.status === SwapStatus.AWAITING_DEPOSIT).length === 0 && (
+                 <div className="col-span-full py-32 text-center bg-white border border-dashed border-slate-200 rounded-[3rem]">
+                   <div className="text-5xl mb-6 grayscale opacity-40">❄️</div>
+                   <h3 className="text-sm font-black text-slate-400 uppercase tracking-[0.3em]">No Active Deposit Listeners</h3>
+                 </div>
+               )}
+            </div>
           </div>
         )}
       </main>
 
-      {/* Side Detail View */}
+      {/* Detail Slide-over */}
       {selectedOrder && (
-        <div className="fixed inset-0 z-50 flex justify-end bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-300" onClick={() => setSelectedOrder(null)}>
-           <div className="w-full max-w-xl bg-white h-full shadow-2xl p-10 flex flex-col animate-in slide-in-from-right duration-300" onClick={e => e.stopPropagation()}>
-              <div className="flex items-center justify-between mb-8">
-                 <h2 className="text-xl font-bold text-slate-900 uppercase tracking-tight">Order Profile: {selectedOrder.id}</h2>
-                 <button onClick={() => setSelectedOrder(null)} className="p-2 text-slate-400 hover:text-slate-900">
-                    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M6 18L18 6M6 6l12 12" strokeWidth={2} /></svg>
+        <div className="fixed inset-0 z-[100] flex justify-end bg-slate-900/40 backdrop-blur-md animate-in fade-in" onClick={() => setSelectedOrder(null)}>
+           <div className="w-full max-w-xl bg-white h-full shadow-2xl p-12 flex flex-col animate-in slide-in-from-right duration-500" onClick={e => e.stopPropagation()}>
+              <div className="flex items-center justify-between mb-12">
+                 <div>
+                    <h2 className="text-2xl font-black text-slate-900 uppercase tracking-tighter">Execution Brief</h2>
+                    <p className="text-[10px] text-slate-400 font-bold uppercase tracking-[0.2em] mt-1">Transaction Instance: {selectedOrder.id}</p>
+                 </div>
+                 <button onClick={() => setSelectedOrder(null)} className="p-3 text-slate-300 hover:text-slate-900 transition-all bg-slate-50 rounded-2xl hover:bg-slate-100">
+                    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M6 18L18 6M6 6l12 12" strokeWidth={2.5} /></svg>
                  </button>
               </div>
 
-              <div className="flex-grow space-y-8 overflow-y-auto pr-4 custom-scrollbar">
-                 <div className="grid grid-cols-2 gap-4">
-                    <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
-                       <span className="text-[10px] font-bold text-slate-400 uppercase">Input Volume</span>
-                       <p className="text-lg font-bold text-slate-900">{selectedOrder.fromAmount} {selectedOrder.fromSymbol}</p>
+              <div className="flex-grow space-y-10 overflow-y-auto pr-4 custom-scrollbar">
+                 <div className="grid grid-cols-2 gap-6">
+                    <div className="bg-slate-50 p-6 rounded-[2rem] border border-slate-100">
+                       <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Inbound Payload</span>
+                       <div className="text-xl font-black text-slate-900 mt-2">{selectedOrder.fromAmount} {selectedOrder.fromSymbol}</div>
                     </div>
-                    <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
-                       <span className="text-[10px] font-bold text-slate-400 uppercase">Output Volume</span>
-                       <p className="text-lg font-bold text-blue-600">{selectedOrder.toAmount} {selectedOrder.toSymbol}</p>
+                    <div className="bg-slate-50 p-6 rounded-[2rem] border border-slate-100">
+                       <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Payout Asset</span>
+                       <div className="text-xl font-black text-indigo-600 mt-2">{selectedOrder.toAmount} {selectedOrder.toSymbol}</div>
                     </div>
                  </div>
 
-                 <div className="space-y-4">
-                    <h4 className="text-xs font-bold text-slate-900 uppercase border-b border-slate-100 pb-2">Execution Logs</h4>
-                    <div className="space-y-3">
+                 <div className="space-y-5">
+                    <h4 className="text-[10px] font-black text-slate-900 uppercase tracking-[0.2em] border-b border-slate-100 pb-3">Security Verification Logs</h4>
+                    <div className="space-y-5">
                        {selectedOrder.logs?.map((log: any, i: number) => (
-                         <div key={i} className="flex gap-4">
-                            <span className="text-[10px] font-mono text-slate-400 mt-1">{new Date(log.timestamp).toLocaleTimeString()}</span>
-                            <div>
-                               <p className="text-xs font-medium text-slate-700">{log.message}</p>
-                               <span className="text-[9px] font-bold text-slate-400 uppercase">{log.type}</span>
+                         <div key={i} className="flex gap-5">
+                            <span className="text-[10px] font-mono text-slate-300 mt-1 shrink-0">{new Date(log.timestamp).toLocaleTimeString([], {hour12: false})}</span>
+                            <div className="flex flex-col gap-1">
+                               <p className="text-xs font-bold text-slate-700 leading-tight">{log.message}</p>
+                               <span className={`text-[9px] font-black uppercase tracking-widest ${log.type === 'SUCCESS' ? 'text-green-500' : 'text-slate-400'}`}>{log.type}</span>
                             </div>
                          </div>
                        ))}
                     </div>
                  </div>
 
-                 <div className="space-y-4 pt-6 border-t border-slate-100">
-                    <h4 className="text-xs font-bold text-slate-900 uppercase">Settlement Details</h4>
-                    <DetailRow label="Deposit Address" value={selectedOrder.depositAddress} />
-                    <DetailRow label="Target Payout" value={selectedOrder.destinationAddress} />
-                    {selectedOrder.txHashOut && <DetailRow label="Settlement Hash" value={selectedOrder.txHashOut} />}
+                 <div className="space-y-6 pt-10 border-t border-slate-100">
+                    <AddressField label={`Inbound ${selectedOrder.fromSymbol} (${getCoinNetwork(selectedOrder.fromSymbol)}) Deposit Address`} value={selectedOrder.depositAddress} />
+                    <AddressField label={`Recipient ${selectedOrder.toSymbol} (${getCoinNetwork(selectedOrder.toSymbol)}) Settlement Address`} value={selectedOrder.destinationAddress} />
                  </div>
               </div>
 
-              <div className="pt-8 border-t border-slate-100 flex gap-4">
-                 <button 
-                  onClick={() => updateStatus(selectedOrder.id, SwapStatus.COMPLETED)} 
-                  className="flex-1 py-3 bg-blue-600 text-white font-bold text-xs uppercase tracking-widest rounded-lg hover:bg-blue-700 transition-all shadow-md"
-                 >
-                   Force Settle
-                 </button>
-                 <button 
-                  onClick={() => updateStatus(selectedOrder.id, SwapStatus.EXPIRED)} 
-                  className="px-6 py-3 bg-slate-100 text-slate-600 font-bold text-xs uppercase tracking-widest rounded-lg hover:bg-slate-200 transition-all"
-                 >
-                   Expire
-                 </button>
+              <div className="pt-10 mt-auto flex gap-4 border-t border-slate-100">
+                 <button onClick={() => updateStatus(selectedOrder.id, SwapStatus.COMPLETED)} className="flex-1 py-5 bg-indigo-600 text-white text-[11px] font-black uppercase tracking-[0.2em] rounded-2xl hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-600/20">Finalize Settlement</button>
+                 <button onClick={() => updateStatus(selectedOrder.id, SwapStatus.EXPIRED)} className="px-8 py-5 bg-slate-100 text-slate-500 text-[11px] font-black uppercase tracking-[0.2em] rounded-2xl hover:bg-slate-200 transition-all">Invalidate</button>
               </div>
            </div>
         </div>
@@ -294,10 +386,31 @@ export default function Admin() {
   );
 }
 
-const DetailRow = ({ label, value }: { label: string, value: string }) => (
-  <div className="space-y-1">
-    <span className="text-[9px] font-bold text-slate-400 uppercase">{label}</span>
-    <div className="bg-slate-50 border border-slate-100 p-3 rounded-lg font-mono text-[11px] text-slate-800 break-all select-all">
+const TabButton = ({ active, onClick, label }: { active: boolean, onClick: () => void, label: string }) => (
+  <button 
+    onClick={onClick}
+    className={`px-6 py-2.5 text-[11px] font-black uppercase tracking-widest rounded-xl transition-all ${active ? 'bg-white text-indigo-600 shadow-sm border border-slate-200' : 'text-slate-400 hover:text-slate-600 border border-transparent'}`}
+  >
+    {label}
+  </button>
+);
+
+const KpiCard = ({ label, value, sub, icon, color = "white" }: { label: string, value: string, sub: string, icon: string, color?: string }) => (
+  <div className={`bg-white rounded-[2.5rem] border border-slate-200 p-8 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all relative overflow-hidden group`}>
+    <div className={`absolute top-0 right-0 w-32 h-32 ${color === 'indigo' ? 'bg-indigo-500/5' : 'bg-slate-500/5'} blur-3xl -z-10 group-hover:scale-150 transition-transform duration-700`}></div>
+    <div className="flex justify-between items-start mb-6">
+      <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">{label}</span>
+      <span className="text-xl bg-slate-50 p-2 rounded-xl border border-slate-100">{icon}</span>
+    </div>
+    <div className={`text-3xl font-black ${color === 'indigo' ? 'text-indigo-600' : 'text-slate-900'} tracking-tighter`}>{value}</div>
+    <div className="text-[10px] font-bold text-slate-400 uppercase mt-2 tracking-widest">{sub}</div>
+  </div>
+);
+
+const AddressField = ({ label, value }: { label: string, value: string }) => (
+  <div className="space-y-2">
+    <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{label}</span>
+    <div className="bg-slate-50 border border-slate-100 p-4 rounded-2xl font-mono text-[10px] text-slate-600 break-all select-all leading-relaxed hover:border-indigo-300 transition-colors">
       {value}
     </div>
   </div>
@@ -305,9 +418,12 @@ const DetailRow = ({ label, value }: { label: string, value: string }) => (
 
 const getStatusClasses = (status: SwapStatus) => {
   switch(status) {
-    case SwapStatus.COMPLETED: return 'bg-green-100 text-green-700';
-    case SwapStatus.AWAITING_DEPOSIT: return 'bg-slate-100 text-slate-600';
-    case SwapStatus.EXPIRED: return 'bg-red-100 text-red-700';
-    default: return 'bg-blue-100 text-blue-700';
+    case SwapStatus.COMPLETED: return 'bg-green-50 text-green-600 border-green-200';
+    case SwapStatus.AWAITING_DEPOSIT: return 'bg-slate-100 text-slate-500 border-slate-200';
+    case SwapStatus.EXPIRED: return 'bg-red-50 text-red-600 border-red-200';
+    case SwapStatus.SENDING:
+    case SwapStatus.EXCHANGING:
+    case SwapStatus.CONFIRMING: return 'bg-indigo-50 text-indigo-600 border-indigo-200';
+    default: return 'bg-slate-50 text-slate-500 border-slate-200';
   }
 };
