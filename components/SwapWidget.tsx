@@ -6,7 +6,6 @@ import { Coin, RateType, SwapStatus, HistoryRecord } from '../types';
 import { t } from '../i18n';
 
 // Use environment variable for production, fallback to localhost for dev
-// Note: In Vite, env variables must be prefixed with VITE_
 const API_BASE_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:3001/api';
 
 const PrecisionDisplay = ({ value, isInput = false, onChange, colorClass = "text-foreground" }: { value: string, isInput?: boolean, onChange?: (val: string) => void, colorClass?: string }) => {
@@ -71,6 +70,21 @@ export const SwapWidget: React.FC = () => {
     };
     return (basePrices[from] || 1) / (basePrices[to] || 1);
   }, []);
+
+  // Real-time Address Validator
+  useEffect(() => {
+    if (!address) {
+      setAddressError(null);
+      return;
+    }
+
+    const validator = ADDRESS_VALIDATORS[toCoin.symbol];
+    if (validator && !validator.test(address)) {
+      setAddressError(`Invalid ${toCoin.name} (${toCoin.network}) address format`);
+    } else {
+      setAddressError(null);
+    }
+  }, [address, toCoin]);
 
   // Resilient Health Polling with Diagnostic Info
   useEffect(() => {
@@ -152,6 +166,14 @@ export const SwapWidget: React.FC = () => {
 
   const handleSwap = async () => {
     if (!address.trim()) { setAddressError(`Address required`); addressInputRef.current?.focus(); return; }
+    
+    // Final validation check before network request
+    const validator = ADDRESS_VALIDATORS[toCoin.symbol];
+    if (validator && !validator.test(address)) {
+      setAddressError(`Invalid ${toCoin.symbol} address format. Please check and try again.`);
+      return;
+    }
+
     if (addressError || amountError || !parseFloat(fromAmount)) return;
     
     setIsLoading(true);
@@ -300,14 +322,33 @@ export const SwapWidget: React.FC = () => {
 
         <div className="mt-6 space-y-3">
           <div className="flex items-center justify-between px-1">
-            <label className="text-[9px] font-black text-muted-foreground uppercase tracking-[0.2em]">Recipient Destination</label>
+            <label className={`text-[9px] font-black uppercase tracking-[0.2em] transition-colors ${addressError ? 'text-red-500' : 'text-muted-foreground'}`}>
+              Recipient Destination
+            </label>
+            {addressError && (
+              <span className="text-[8px] font-black text-red-500 uppercase tracking-widest animate-pulse">
+                Invalid Format
+              </span>
+            )}
           </div>
-          <div className="relative group interactive-input-container bg-muted/30 border border-border rounded-xl overflow-hidden focus-within:ring-1 ring-blue-500/20">
-            <input ref={addressInputRef} type="text" value={address} onChange={(e) => { setAddress(e.target.value); setAddressError(null); }} className={`w-full bg-transparent p-4 pr-24 text-xs font-bold outline-none placeholder:text-muted-foreground/30 transition-all ${addressError ? 'text-red-400' : 'text-blue-600 dark:text-blue-400'}`} placeholder={`Enter your ${toCoin.name} address...`} />
+          <div className={`relative group interactive-input-container bg-muted/30 border rounded-xl overflow-hidden focus-within:ring-1 transition-all ${addressError ? 'border-red-500/50 ring-red-500/20' : 'border-border ring-blue-500/20'}`}>
+            <input 
+              ref={addressInputRef} 
+              type="text" 
+              value={address} 
+              onChange={(e) => setAddress(e.target.value)} 
+              className={`w-full bg-transparent p-4 pr-24 text-xs font-bold outline-none placeholder:text-muted-foreground/30 transition-all ${addressError ? 'text-red-400' : 'text-blue-600 dark:text-blue-400'}`} 
+              placeholder={`Enter your ${toCoin.name} address...`} 
+            />
             <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-3 text-muted-foreground">
                <button onClick={async () => { setAddress(await navigator.clipboard.readText()); }} className="hover:text-foreground transition-colors"><svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg></button>
             </div>
           </div>
+          {addressError && (
+             <p className="text-[8px] text-red-500/80 font-bold uppercase tracking-widest px-1 mt-1">
+               {addressError}
+             </p>
+          )}
         </div>
 
         <button onClick={handleSwap} disabled={isButtonDisabled} className={`w-full mt-6 py-5 font-black rounded-2xl transition-all duration-500 text-sm uppercase tracking-[0.2em] relative overflow-hidden group ${isButtonDisabled ? 'bg-muted text-muted-foreground cursor-not-allowed shadow-none' : 'bg-blue-600 hover:bg-blue-500 text-white shadow-2xl shadow-blue-600/30 active:scale-[0.97]'}`}>
@@ -336,7 +377,7 @@ export const SwapWidget: React.FC = () => {
             </div>
             <div className="max-h-[350px] overflow-y-auto custom-scrollbar p-2">
               {SUPPORTED_COINS.filter(c => c.symbol.toLowerCase().includes(searchTerm.toLowerCase())).map(coin => (
-                <button key={coin.id} onClick={() => { if (showPicker === 'from') { setFromCoin(coin); setFromAmount(coin.minAmount.toString()); } else { setToCoin(coin); setAddressError(null); } setShowPicker(null); }} className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/50 rounded-xl transition-all group">
+                <button key={coin.id} onClick={() => { if (showPicker === 'from') { setFromCoin(coin); setFromAmount(coin.minAmount.toString()); } else { setToCoin(coin); } setShowPicker(null); }} className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/50 rounded-xl transition-all group">
                   <div className="flex items-center gap-3">
                     <img src={coin.logo} alt="" className="w-7 h-7 rounded-full bg-muted p-1" />
                     <div className="text-left">
