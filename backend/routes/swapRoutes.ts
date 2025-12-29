@@ -32,6 +32,14 @@ router.post('/admin/orders/:id/status', (req: any, res: any) => {
   
   if (!order) return res.status(404).json({ error: 'Order not found' });
   
+  // Track the manual change in execution logs
+  if (!order.logs) order.logs = [];
+  order.logs.push({
+    timestamp: Date.now(),
+    message: `Administrative override: Status manually set to ${status}`,
+    type: 'NETWORK'
+  });
+
   order.status = status;
   orderManager.updateOrder(order);
   

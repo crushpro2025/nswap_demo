@@ -8,6 +8,12 @@ export enum SwapStatus {
   EXPIRED = 'EXPIRED'
 }
 
+export interface ExecutionLog {
+  timestamp: number;
+  message: string;
+  type: 'INFO' | 'SUCCESS' | 'NETWORK';
+}
+
 export interface SwapOrder {
   id: string;
   fromSymbol: string;
@@ -20,6 +26,9 @@ export interface SwapOrder {
   confirmations: number;
   requiredConfirmations: number;
   createdAt: number;
+  logs: ExecutionLog[];
+  txHashOut?: string;
+  txHashIn?: string;
 }
 
 // In-memory Store (Replace with MongoDB/PostgreSQL in production)

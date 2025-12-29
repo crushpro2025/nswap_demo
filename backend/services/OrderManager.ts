@@ -17,8 +17,13 @@ export class OrderManager {
       depositAddress: `0x${uuidv4().substring(0, 32)}`,
       status: SwapStatus.AWAITING_DEPOSIT,
       confirmations: 0,
-      requiredConfirmations: data.fromSymbol === 'BTC' ? 3 : 1, // BTC requires more security
-      createdAt: Date.now()
+      requiredConfirmations: data.fromSymbol === 'BTC' ? 3 : 1,
+      createdAt: Date.now(),
+      logs: [{
+        timestamp: Date.now(),
+        message: 'Order created and pending deposit.',
+        type: 'INFO'
+      }]
     };
 
     orders.set(newOrder.id, newOrder);

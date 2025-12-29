@@ -1,4 +1,3 @@
-
 import { Router, Request, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { orders, SwapOrder, SwapStatus } from '../models/Order';
@@ -18,6 +17,7 @@ router.post('/orders', (req: any, res: any) => {
   const mockRate = 0.052; // Example: BTC to ETH rate
   const toAmount = (parseFloat(fromAmount) * mockRate).toFixed(6);
 
+  // Fix: Added missing 'logs' property to satisfy the SwapOrder interface requirement on line 21
   const newOrder: SwapOrder = {
     id: uuidv4().substring(0, 12).toUpperCase(),
     fromSymbol,
@@ -29,7 +29,8 @@ router.post('/orders', (req: any, res: any) => {
     status: SwapStatus.AWAITING_DEPOSIT,
     confirmations: 0,
     requiredConfirmations: 3,
-    createdAt: Date.now()
+    createdAt: Date.now(),
+    logs: []
   };
 
   orders.set(newOrder.id, newOrder);
