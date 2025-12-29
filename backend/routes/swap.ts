@@ -17,7 +17,7 @@ router.post('/orders', (req: any, res: any) => {
   const mockRate = 0.052; // Example: BTC to ETH rate
   const toAmount = (parseFloat(fromAmount) * mockRate).toFixed(6);
 
-  // Fix: Added missing 'logs' property to satisfy the SwapOrder interface requirement on line 21
+  // Fix: Added missing 'logs' and 'provider' property to satisfy the SwapOrder interface requirement on line 21
   const newOrder: SwapOrder = {
     id: uuidv4().substring(0, 12).toUpperCase(),
     fromSymbol,
@@ -30,7 +30,8 @@ router.post('/orders', (req: any, res: any) => {
     confirmations: 0,
     requiredConfirmations: 3,
     createdAt: Date.now(),
-    logs: []
+    logs: [],
+    provider: 'NEXUS_INTERNAL'
   };
 
   orders.set(newOrder.id, newOrder);

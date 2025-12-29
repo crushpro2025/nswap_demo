@@ -5,13 +5,14 @@ export enum SwapStatus {
   EXCHANGING = 'EXCHANGING',
   SENDING = 'SENDING',
   COMPLETED = 'COMPLETED',
-  EXPIRED = 'EXPIRED'
+  EXPIRED = 'EXPIRED',
+  FAILED = 'FAILED'
 }
 
 export interface ExecutionLog {
   timestamp: number;
   message: string;
-  type: 'INFO' | 'SUCCESS' | 'NETWORK';
+  type: 'INFO' | 'SUCCESS' | 'NETWORK' | 'ERROR';
 }
 
 export interface SwapOrder {
@@ -29,7 +30,16 @@ export interface SwapOrder {
   logs: ExecutionLog[];
   txHashOut?: string;
   txHashIn?: string;
+  provider: 'NEXUS_INTERNAL' | 'CHANGENOW';
+  providerId?: string; // ChangeNOW ID
+  network?: string;
 }
 
-// In-memory Store (Replace with MongoDB/PostgreSQL in production)
+// In-memory Store
 export const orders = new Map<string, SwapOrder>();
+
+// Global System Configuration
+export const systemConfig = {
+  useChangeNow: false,
+  changeNowApiKey: 'YOUR_API_KEY_HERE' // This would be in .env in production
+};
