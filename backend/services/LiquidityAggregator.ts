@@ -1,16 +1,15 @@
 
 import axios from 'axios';
+import { systemConfig } from '../models/Order';
 
 /**
  * Smart Liquidity Aggregator
- * Fetches real-time market data and applies institutional spreads.
- * Version 4.1: Background Syncing to prevent Oracle Rate Limiting (429)
+ * Version 5.5: Added production ChangeNOW integration
  */
 export class LiquidityAggregator {
   private static instance: LiquidityAggregator;
   private isSyncing = false;
   
-  // Persistent memory cache to survive API outages
   private static lastKnownRates: Record<string, number> = {
     'BTC': 68500, 'ETH': 3480, 'SOL': 142, 'USDT': 1.0, 
     'TRX': 0.12, 'LTC': 84, 'XMR': 168, 'DOGE': 0.16, 
@@ -32,15 +31,9 @@ export class LiquidityAggregator {
     return this.instance;
   }
 
-  /**
-   * Starts a background loop to fetch prices every 60 seconds.
-   * This prevents hitting CoinGecko's rate limits (429) when multiple users swap.
-   */
   private startBackgroundSync() {
     if (this.isSyncing) return;
     this.isSyncing = true;
-    
-    console.log('[LIQUIDITY] Initializing Oracle Sync Loop (60s Intervals)');
     this.syncPrices();
     setInterval(() => this.syncPrices(), 60000); 
   }
@@ -59,44 +52,50 @@ export class LiquidityAggregator {
           LiquidityAggregator.lastKnownRates[symbol] = data[id].usd;
         }
       });
-      console.log('[LIQUIDITY] Oracle sync successful. Cache updated.');
     } catch (err: any) {
-      if (err.response?.status === 429) {
-        console.warn('[LIQUIDITY] Oracle Rate Limited (429). Retaining existing cache.');
-      } else {
-        console.error('[LIQUIDITY] Oracle Sync Error:', err.message);
-      }
+      console.warn('[LIQUIDITY] Oracle sync error, using cache');
     }
   }
 
-  public async getBestExecutionRate(from: string, to: string) {
-    const providers = [
-      { name: 'NEXUS_INTERNAL', spread: 0.0015 },
-      { name: 'UNISWAP_V3', spread: 0.003 },
-      { name: '1INCH_AGGREGATOR', spread: 0.001 }
-    ];
+  public async getBestExecutionRate(from: string, to: string, amount: number) {
+    // If ChangeNOW is enabled, attempt to get real production quote
+    if (systemConfig.useChangeNow) {
+      try {
+        const fromSym = from.toLowerCase();
+        const toSym = to.toLowerCase();
+        const apiKeyParam = systemConfig.changeNowApiKey ? `&apiKey=${systemConfig.changeNowApiKey}` : '';
+        
+        // ChangeNOW Public/Private Quote API
+        const url = `https://api.changenow.io/v1/exchange-amount/${amount}/${fromSym}_${toSym}?fixed=false${apiKeyParam}`;
+        const response = await axios.get(url, { timeout: 5000 });
+        
+        if (response.data && response.data.toAmount) {
+          return {
+            provider: 'CHANGENOW',
+            rate: response.data.toAmount / amount,
+            estimatedAmount: response.data.toAmount.toString(),
+            isRealtime: true
+          };
+        }
+      } catch (err: any) {
+        console.error('[LIQUIDITY] ChangeNOW Quote Failed, falling back to Oracle', err.message);
+      }
+    }
 
-    // Pull from the recently synced cache instead of making a new API call
+    // Fallback: Internal Oracle
     const rate = this.getRateFromCache(from, to);
-    
-    // Sort to find the highest rate for the user (lowest spread)
-    const quotes = providers.map(p => ({
-      provider: p.name,
-      rate: rate * (1 - p.spread),
-      isStale: false // We consider our background sync "fresh" enough
-    }));
-
-    return quotes.sort((a, b) => b.rate - a.rate)[0];
+    const spread = 0.005; // 0.5% platform spread
+    return {
+      provider: 'NEXUS_ORACLE',
+      rate: rate * (1 - spread),
+      estimatedAmount: (amount * rate * (1 - spread)).toFixed(6),
+      isRealtime: false
+    };
   }
 
   private getRateFromCache(from: string, to: string): number {
     const fromPrice = LiquidityAggregator.lastKnownRates[from.toUpperCase()] || 1;
     const toPrice = LiquidityAggregator.lastKnownRates[to.toUpperCase()] || 1;
-    
-    if (fromPrice === 1 || toPrice === 1) {
-      console.warn(`[LIQUIDITY] Asset ${fromPrice === 1 ? from : to} missing in cache. Using parity.`);
-    }
-
     return fromPrice / toPrice;
   }
 }

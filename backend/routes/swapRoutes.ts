@@ -11,7 +11,7 @@ const aggregator = LiquidityAggregator.getInstance();
 router.get('/health', (req: any, res: any) => {
   res.json({ 
     status: 'UP', 
-    engine: 'v5.0.0-READY', 
+    engine: 'v5.5.0-READY', 
     mode: systemConfig.useChangeNow ? 'CHANGENOW' : 'INTERNAL' 
   });
 });
@@ -20,9 +20,17 @@ router.get('/admin/config', (req: any, res: any) => {
   res.json(systemConfig);
 });
 
+router.post('/admin/config/update', (req: any, res: any) => {
+  const { useChangeNow, changeNowApiKey } = req.body;
+  if (typeof useChangeNow === 'boolean') systemConfig.useChangeNow = useChangeNow;
+  if (typeof changeNowApiKey === 'string') systemConfig.changeNowApiKey = changeNowApiKey;
+  
+  console.log(`[SYSTEM] Configuration updated. Engine: ${systemConfig.useChangeNow ? 'CHANGENOW' : 'INTERNAL'}`);
+  res.json(systemConfig);
+});
+
 router.post('/admin/config/toggle', (req: any, res: any) => {
   systemConfig.useChangeNow = !systemConfig.useChangeNow;
-  console.log(`[SYSTEM] Engine mode toggled to: ${systemConfig.useChangeNow ? 'CHANGENOW' : 'INTERNAL'}`);
   res.json(systemConfig);
 });
 
@@ -52,12 +60,14 @@ router.post('/admin/orders/:id/status', (req: any, res: any) => {
 
 router.get('/quote', async (req: any, res: any) => {
   const { from, to, amount } = req.query;
-  const quote = await aggregator.getBestExecutionRate(from as string, to as string);
+  const quote = await aggregator.getBestExecutionRate(from as string, to as string, parseFloat(amount as string || "1"));
   const inputAmount = parseFloat(amount as string || "1");
+  
   res.json({
     rate: quote.rate,
-    estimatedAmount: (inputAmount * quote.rate).toFixed(6),
-    provider: systemConfig.useChangeNow ? 'CHANGENOW' : 'NEXUS_ORACLE'
+    estimatedAmount: quote.estimatedAmount || (inputAmount * quote.rate).toFixed(6),
+    provider: quote.provider,
+    isRealtime: quote.isRealtime
   });
 });
 

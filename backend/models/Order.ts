@@ -41,5 +41,5 @@ export const orders = new Map<string, SwapOrder>();
 // Global System Configuration
 export const systemConfig = {
   useChangeNow: false,
-  changeNowApiKey: 'YOUR_API_KEY_HERE' // This would be in .env in production
+  changeNowApiKey: '' // Managed via Admin Settings
 };
