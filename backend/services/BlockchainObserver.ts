@@ -2,46 +2,54 @@
 import { OrderManager } from './OrderManager';
 import { SwapStatus } from '../models/Order';
 
-/**
- * Blockchain Observer Service
- * Monitors the "Distributed Ledger" for order fulfillment.
- */
 export class BlockchainObserver {
   private orderManager = OrderManager.getInstance();
 
   public start() {
-    setInterval(() => this.scan(), 4000);
+    // Poll the active sessions every 5 seconds
+    setInterval(() => this.scan(), 5000);
   }
 
   private scan() {
     const activeOrders = this.orderManager.getAllOrders();
     
     activeOrders.forEach(order => {
-      // Logic for progressing orders based on "Network Events"
+      // Logic for progressing orders based on network-specific block times
       switch(order.status) {
         case SwapStatus.AWAITING_DEPOSIT:
-          // Simulate finding a deposit 15% of the time
-          if (Math.random() > 0.85) {
+          // Simulate ledger mempool detection (12% chance per tick)
+          if (Math.random() > 0.88) {
             order.status = SwapStatus.CONFIRMING;
-            console.log(`[OBSERVER] Found deposit for ${order.id}`);
+            console.log(`[LEDGER] Inbound TX detected for node ${order.id}`);
           }
           break;
 
         case SwapStatus.CONFIRMING:
+          // Inbound confirmation simulation
           if (order.confirmations < order.requiredConfirmations) {
-            order.confirmations++;
+             // BTC takes longer to confirm than SOL/ETH in this simulation
+             const confirmationProbability = order.fromSymbol === 'BTC' ? 0.3 : 0.6;
+             if (Math.random() < confirmationProbability) {
+               order.confirmations++;
+             }
           } else {
             order.status = SwapStatus.EXCHANGING;
           }
           break;
 
         case SwapStatus.EXCHANGING:
-          order.status = SwapStatus.SENDING;
+          // Atomic swap simulation (80% success rate per tick)
+          if (Math.random() > 0.2) {
+            order.status = SwapStatus.SENDING;
+          }
           break;
 
         case SwapStatus.SENDING:
-          order.status = SwapStatus.COMPLETED;
-          console.log(`[OBSERVER] Settlement complete for ${order.id}`);
+          // Broadcoast payout to target chain
+          if (Math.random() > 0.3) {
+            order.status = SwapStatus.COMPLETED;
+            console.log(`[LEDGER] Atomic settlement broadcast complete: ${order.id}`);
+          }
           break;
       }
       

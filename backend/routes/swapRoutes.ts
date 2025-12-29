@@ -1,5 +1,5 @@
 
-import { Router, Request, Response } from 'express';
+import { Router } from 'express';
 import { OrderManager } from '../services/OrderManager';
 import { LiquidityAggregator } from '../services/LiquidityAggregator';
 
@@ -8,10 +8,45 @@ const orderManager = OrderManager.getInstance();
 const aggregator = LiquidityAggregator.getInstance();
 
 /**
- * GATEWAY ENDPOINT: Create Order
- * Steps: 1. Validate Input -> 2. Aggregate Rates -> 3. Create Record
+ * PING: Node Health Check
  */
-// Fix: Use 'any' for req and res to resolve TypeScript errors where 'body' or 'status' are not found on the default Request/Response types
+router.get('/health', (req: any, res: any) => {
+  res.json({ status: 'UP', engine: 'v4.0.3-PROD', timestamp: Date.now() });
+});
+
+/**
+ * QUOTE: Get Live Execution Quote
+ */
+router.get('/quote', async (req: any, res: any) => {
+  const { from, to, amount } = req.query;
+  if (!from || !to) return res.status(400).json({ error: 'Parameters required' });
+  
+  try {
+    const quote = await aggregator.getBestExecutionRate(from as string, to as string);
+    const inputAmount = parseFloat(amount as string || "1");
+    const estimatedAmount = (inputAmount * quote.rate).toFixed(6);
+    
+    res.json({
+      rate: quote.rate,
+      estimatedAmount,
+      provider: quote.provider,
+      isStale: quote.isStale,
+      validUntil: Date.now() + 30000
+    });
+  } catch (err) {
+    console.error('[QUOTE_ROUTE_ERROR]', err);
+    res.status(200).json({ 
+      error: 'Using localized node pricing', 
+      rate: 1.0, 
+      estimatedAmount: amount, 
+      isStale: true 
+    });
+  }
+});
+
+/**
+ * GATEWAY ENDPOINT: Create Order
+ */
 router.post('/orders', async (req: any, res: any) => {
   try {
     const { fromSymbol, toSymbol, fromAmount, destinationAddress } = req.body;
@@ -20,19 +55,17 @@ router.post('/orders', async (req: any, res: any) => {
       return res.status(400).json({ error: 'Incomplete settlement parameters' });
     }
 
-    // Call Liquidity Aggregator for best rate
-    const bestRate = await aggregator.getBestExecutionRate(fromSymbol, toSymbol);
-    const toAmount = (parseFloat(fromAmount) * bestRate.rate).toFixed(6);
+    const quote = await aggregator.getBestExecutionRate(fromSymbol, toSymbol);
+    const toAmount = (parseFloat(fromAmount) * quote.rate).toFixed(6);
 
-    // Register with Order Manager
     const order = orderManager.createOrder({
       fromSymbol,
       toSymbol,
       fromAmount,
       toAmount,
       destinationAddress,
-      rate: bestRate.rate,
-      provider: bestRate.provider
+      rate: quote.rate,
+      provider: quote.provider
     });
 
     res.status(201).json(order);
@@ -42,10 +75,6 @@ router.post('/orders', async (req: any, res: any) => {
   }
 });
 
-/**
- * GATEWAY ENDPOINT: Track Order
- */
-// Fix: Use 'any' for req and res to ensure 'params', 'status', and 'json' methods are correctly recognized by TypeScript
 router.get('/orders/:id', (req: any, res: any) => {
   const order = orderManager.getOrder(req.params.id);
   if (!order) return res.status(404).json({ error: 'Order not found' });

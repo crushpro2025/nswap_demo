@@ -5,7 +5,8 @@ import { SUPPORTED_COINS, SERVICE_FEE, NETWORK_FEE_ESTIMATES, ADDRESS_VALIDATORS
 import { Coin, RateType, SwapStatus, HistoryRecord } from '../types';
 import { t } from '../i18n';
 
-const API_BASE_URL = 'http://localhost:3001/api';
+// Use environment variable for production, fallback to localhost for dev
+const API_BASE_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:3001/api';
 
 const PrecisionDisplay = ({ value, isInput = false, onChange, colorClass = "text-foreground" }: { value: string, isInput?: boolean, onChange?: (val: string) => void, colorClass?: string }) => {
   if (isInput) {
@@ -53,32 +54,81 @@ export const SwapWidget: React.FC = () => {
   const [toAmount, setToAmount] = useState<string>('0');
   const [address, setAddress] = useState<string>('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isQuoting, setIsQuoting] = useState(false);
+  const [networkStatus, setNetworkStatus] = useState<'ACTIVE' | 'OFFLINE' | 'CONNECTING'>('CONNECTING');
+  const [priceStatus, setPriceStatus] = useState<'LIVE' | 'STALE'>('LIVE');
   const [showPicker, setShowPicker] = useState<'from' | 'to' | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [addressError, setAddressError] = useState<string | null>(null);
   const [amountError, setAmountError] = useState<string | null>(null);
-  const [showCamera, setShowCamera] = useState(false);
-  const videoRef = useRef<HTMLVideoElement>(null);
   const addressInputRef = useRef<HTMLInputElement>(null);
 
-  const calculateRate = useCallback(() => {
-    const mockPrices: Record<string, number> = {
-      'BTC': 68111, 'ETH': 3450, 'USDT': 1, 'SOL': 145, 'TRX': 0.12, 'XMR': 165, 'DOGE': 0.16, 'XRP': 0.62, 'BSC': 590, 'ARB': 1.10, 'TON': 7.20, 'LTC': 82, 'BNB': 585
+  // Local Fallback Rates for outages
+  const getLocalRate = useCallback((from: string, to: string) => {
+    const basePrices: Record<string, number> = {
+      'BTC': 68500, 'ETH': 3480, 'USDT': 1, 'SOL': 142, 'TRX': 0.12, 'XMR': 168, 'DOGE': 0.16, 'XRP': 0.62, 'BSC': 595, 'BNB': 595, 'ARB': 1.12, 'TON': 7.15
     };
-    const fromPrice = mockPrices[fromCoin.symbol] || 1;
-    const toPrice = mockPrices[toCoin.symbol] || 1;
-    const rawRate = fromPrice / toPrice;
-    const amount = parseFloat(fromAmount) || 0;
-    if (amount <= 0) {
-      setToAmount('0');
-      return;
-    }
-    const outputBeforeFees = amount * rawRate;
-    const finalOutput = Math.max(0, outputBeforeFees - (outputBeforeFees * SERVICE_FEE) - (NETWORK_FEE_ESTIMATES[toCoin.symbol] || 0));
-    setToAmount(finalOutput.toFixed(toCoin.precision).replace(/\.?0+$/, ""));
-  }, [fromCoin, toCoin, fromAmount]);
+    return (basePrices[from] || 1) / (basePrices[to] || 1);
+  }, []);
 
-  useEffect(() => { calculateRate(); }, [calculateRate]);
+  // Health Check with Cold Start Resiliency
+  useEffect(() => {
+    let checkInterval: number;
+    const checkHealth = async () => {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 8000);
+        const res = await fetch(`${API_BASE_URL}/health`, { signal: controller.signal });
+        clearTimeout(timeoutId);
+
+        if (res.ok) {
+          setNetworkStatus('ACTIVE');
+          clearInterval(checkInterval);
+          checkInterval = window.setInterval(checkHealth, 60000);
+        } else {
+          setNetworkStatus('OFFLINE');
+        }
+      } catch (e) {
+        setNetworkStatus(prev => prev === 'ACTIVE' ? 'OFFLINE' : 'CONNECTING');
+      }
+    };
+
+    checkHealth();
+    checkInterval = window.setInterval(checkHealth, 5000);
+    return () => clearInterval(checkInterval);
+  }, []);
+
+  const updateQuote = useCallback(async () => {
+    const amount = parseFloat(fromAmount);
+    if (!amount || isNaN(amount)) { setToAmount('0'); return; }
+
+    setIsQuoting(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/quote?from=${fromCoin.symbol}&to=${toCoin.symbol}&amount=${fromAmount}`);
+      const data = await res.json();
+      
+      if (data.estimatedAmount && !data.error) {
+        const finalOutput = Math.max(0, parseFloat(data.estimatedAmount) - (parseFloat(data.estimatedAmount) * SERVICE_FEE));
+        setToAmount(finalOutput.toFixed(toCoin.precision).replace(/\.?0+$/, ""));
+        setPriceStatus(data.isStale ? 'STALE' : 'LIVE');
+      } else {
+        throw new Error("Backend quote unavailable");
+      }
+    } catch (err) {
+      const localRate = getLocalRate(fromCoin.symbol, toCoin.symbol);
+      const estimated = amount * localRate;
+      const finalOutput = Math.max(0, estimated - (estimated * SERVICE_FEE));
+      setToAmount(finalOutput.toFixed(toCoin.precision).replace(/\.?0+$/, ""));
+      setPriceStatus('STALE');
+    } finally {
+      setIsQuoting(false);
+    }
+  }, [fromCoin.symbol, toCoin.symbol, fromAmount, toCoin.precision, getLocalRate]);
+
+  useEffect(() => {
+    const timer = setTimeout(updateQuote, 500);
+    return () => clearTimeout(timer);
+  }, [updateQuote]);
 
   useEffect(() => {
     const val = parseFloat(fromAmount);
@@ -112,10 +162,12 @@ export const SwapWidget: React.FC = () => {
         })
       });
 
-      if (!response.ok) throw new Error('API Session Rejected');
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || 'API Session Rejected');
+      }
+      
       const order = await response.json();
-
-      // Store in history for the UI
       const history = JSON.parse(localStorage.getItem('nexus_swap_history') || '[]');
       history.unshift({
         id: order.id,
@@ -128,19 +180,19 @@ export const SwapWidget: React.FC = () => {
         destinationAddress: order.destinationAddress
       });
       localStorage.setItem('nexus_swap_history', JSON.stringify(history.slice(0, 50)));
-
       navigate(`/status/${order.id}`);
-    } catch (err) {
-      alert('Backend offline. Please start the Node.js server in /backend first.');
-      console.error(err);
+    } catch (err: any) {
+      alert(`Network Error: ${err.message}. Backend node may be initializing.`);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const isButtonDisabled = isLoading || amountError !== null || !address || !!addressError;
+  const isButtonDisabled = isLoading || amountError !== null || !address || !!addressError || networkStatus !== 'ACTIVE';
   let buttonText = 'Initialize Secure Swap';
-  if (isLoading) buttonText = 'Connecting to Engine...';
+  if (networkStatus === 'CONNECTING') buttonText = 'Waking Up Engine...';
+  else if (networkStatus === 'OFFLINE') buttonText = 'Node Unreachable';
+  else if (isLoading) buttonText = 'Connecting to Engine...';
   else if (amountError) buttonText = 'Amount Check Required';
   else if (!address) buttonText = 'Provide Destination Address';
   else if (addressError) buttonText = 'Invalid Destination';
@@ -153,9 +205,31 @@ export const SwapWidget: React.FC = () => {
              <h2 className="text-[9px] font-black text-muted-foreground uppercase tracking-[0.3em]">Execution Details</h2>
              <div className="h-0.5 w-5 bg-blue-600/30 rounded-full"></div>
           </div>
-          <div className="flex items-center gap-2 px-2.5 py-1 bg-green-500/5 rounded-full border border-green-500/10">
-            <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></span>
-            <span className="text-[8px] font-black text-green-500 uppercase tracking-widest">Network Active</span>
+          <div className="flex items-center gap-4">
+            {priceStatus === 'STALE' && (
+              <div className="text-[8px] font-black text-amber-500 uppercase tracking-widest animate-pulse">Safety Cache Active</div>
+            )}
+            <div 
+              className={`flex items-center gap-2 px-2.5 py-1 rounded-full border transition-all duration-500 cursor-help group/status ${
+                networkStatus === 'ACTIVE' ? 'bg-green-500/5 border-green-500/10' : 
+                networkStatus === 'CONNECTING' ? 'bg-amber-500/5 border-amber-500/10' : 
+                'bg-red-500/5 border-red-500/10'
+              }`}
+              title={networkStatus === 'CONNECTING' ? "Engine is waking up from standby. This usually takes 30-40 seconds." : ""}
+            >
+              <span className={`w-1.5 h-1.5 rounded-full animate-pulse ${
+                networkStatus === 'ACTIVE' ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]' : 
+                networkStatus === 'CONNECTING' ? 'bg-amber-500 animate-bounce' : 
+                'bg-red-500'
+              }`}></span>
+              <span className={`text-[8px] font-black uppercase tracking-widest ${
+                networkStatus === 'ACTIVE' ? 'text-green-500' : 
+                networkStatus === 'CONNECTING' ? 'text-amber-500' : 
+                'text-red-500'
+              }`}>
+                {networkStatus === 'ACTIVE' ? 'Network Active' : networkStatus === 'CONNECTING' ? 'Waking Up Node' : 'Node Offline'}
+              </span>
+            </div>
           </div>
         </div>
         
@@ -166,7 +240,6 @@ export const SwapWidget: React.FC = () => {
             </label>
             <div className="flex gap-3 text-[8px] font-black uppercase tracking-widest text-muted-foreground">
               <span className="opacity-60">Min: {fromCoin.minAmount}</span>
-              <span className="opacity-60">Max: {fromCoin.maxAmount}</span>
             </div>
           </div>
           <div className="flex items-center justify-between gap-3">
@@ -192,7 +265,9 @@ export const SwapWidget: React.FC = () => {
         <div className="interactive-input-container bg-muted/30 border border-border rounded-2xl p-4 flex flex-col gap-1 transition-all">
           <label className="text-[10px] font-black text-emerald-600 dark:text-[#14F195] uppercase tracking-[0.2em] px-0.5 mb-1">{t('swap.youGet')}</label>
           <div className="flex items-center justify-between gap-3">
-            <PrecisionDisplay value={toAmount} colorClass="text-emerald-600 dark:text-[#14F195]" />
+            <div className={isQuoting ? 'animate-pulse opacity-50' : ''}>
+               <PrecisionDisplay value={toAmount} colorClass="text-emerald-600 dark:text-[#14F195]" />
+            </div>
             <button onClick={() => setShowPicker('to')} className="flex items-center gap-2 bg-card hover:bg-muted/80 px-3 py-1.5 rounded-xl border border-border transition-all shrink-0 group active:scale-95 shadow-sm">
               <img src={toCoin.logo} alt="" className="w-4 h-4 rounded-full" />
               <div className="text-left leading-tight">
@@ -207,13 +282,11 @@ export const SwapWidget: React.FC = () => {
         <div className="mt-6 space-y-3">
           <div className="flex items-center justify-between px-1">
             <label className="text-[9px] font-black text-muted-foreground uppercase tracking-[0.2em]">Recipient Destination</label>
-            <button className="text-[9px] font-black text-blue-500 hover:text-blue-600 transition-all uppercase tracking-widest">Verify Ledger</button>
           </div>
           <div className="relative group interactive-input-container bg-muted/30 border border-border rounded-xl overflow-hidden focus-within:ring-1 ring-blue-500/20">
             <input ref={addressInputRef} type="text" value={address} onChange={(e) => { setAddress(e.target.value); setAddressError(null); }} className={`w-full bg-transparent p-4 pr-24 text-xs font-bold outline-none placeholder:text-muted-foreground/30 transition-all ${addressError ? 'text-red-400' : 'text-blue-600 dark:text-blue-400'}`} placeholder={`Enter your ${toCoin.name} address...`} />
             <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-3 text-muted-foreground">
                <button onClick={async () => { setAddress(await navigator.clipboard.readText()); }} className="hover:text-foreground transition-colors"><svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg></button>
-               <button onClick={async () => { setShowCamera(true); }} className="hover:text-foreground transition-colors"><svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" /></svg></button>
             </div>
           </div>
         </div>
@@ -224,6 +297,12 @@ export const SwapWidget: React.FC = () => {
              {buttonText}
           </span>
         </button>
+
+        {networkStatus === 'CONNECTING' && (
+          <div className="mt-4 p-3 rounded-xl bg-amber-500/5 border border-amber-500/10 text-[9px] font-bold text-amber-500/80 uppercase tracking-widest text-center animate-in fade-in slide-in-from-top-2">
+            Initial connection to node can take ~40s due to standby wake-up...
+          </div>
+        )}
       </div>
 
       {showPicker && (
